@@ -15,6 +15,24 @@ const MAX_LIMIT = 10_000;
 const RANGE_ERROR_PATTERN =
   /block range|range (is )?too (large|wide|big)|too many (blocks|results|logs)|exceed(s|ed)? .*(limit|range|max)|limit exceeded|more than \d+ (results|logs|blocks)|query returned more than|response size/i;
 
+/**
+ * Maps an eth_getLogs failure to a ToolError. A non-retryable node error whose
+ * message says the query is too wide becomes RANGE_TOO_LARGE, carrying the
+ * node's own text; everything else is classified as usual.
+ */
+export function classifyGetLogsError(err: unknown, fromBlock: bigint, toBlock: bigint): ToolError {
+  const e = toToolError(err);
+  const message = rpcMessage(err);
+  if (!e.retryable && (e.code === 'RPC_ERROR' || e.code === 'INVALID_INPUT') && RANGE_ERROR_PATTERN.test(message)) {
+    return new ToolError('RANGE_TOO_LARGE', `The RPC node rejected the range: ${message}`, {
+      hint: 'Use a smaller block range or a narrower filter (address, event, args).',
+      details: { fromBlock: fromBlock.toString(), toBlock: toBlock.toString(), rpcMessage: message },
+      cause: err,
+    });
+  }
+  return e;
+}
+
 async function resolveBlockNumber(
   client: ChainClient,
   value: number | string | undefined,
@@ -204,19 +222,7 @@ export const getLogs = defineTool({
         ],
       });
     } catch (err) {
-      const e = toToolError(err);
-      if (
-        !e.retryable &&
-        (e.code === 'RPC_ERROR' || e.code === 'INVALID_INPUT') &&
-        RANGE_ERROR_PATTERN.test(rpcMessage(err))
-      ) {
-        throw new ToolError('RANGE_TOO_LARGE', `The RPC node rejected the range: ${rpcMessage(err)}`, {
-          hint: 'Use a smaller block range or a narrower filter (address, event, args).',
-          details: { fromBlock: fromBlock.toString(), toBlock: toBlock.toString(), rpcMessage: rpcMessage(err) },
-          cause: err,
-        });
-      }
-      throw e;
+      throw classifyGetLogsError(err, fromBlock, toBlock);
     }
 
     const limit = input.limit ?? DEFAULT_LIMIT;
