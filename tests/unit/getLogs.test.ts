@@ -81,9 +81,8 @@ describe('get_logs', () => {
   it('maps the RPC block-range rejection to RANGE_TOO_LARGE with the node limit', async () => {
     const h = await createHarness({
       eth_getLogs: () => {
-        // The live run captured this message but not its JSON-RPC code; -32000 is a stand-in.
         throw new RpcFailure(
-          -32000,
+          -32602,
           'eth_getLogs block range 9999 exceeds maximum of 2000; narrow fromBlock–toBlock or filter by address/topics',
         );
       },
@@ -92,7 +91,7 @@ describe('get_logs', () => {
     const error = expectError(await h.call('get_logs', { fromBlock: 1, toBlock: 50 }));
     expect(error.code).toBe('RANGE_TOO_LARGE');
     expect(error.message).toMatch(/exceeds maximum of 2000/);
-    expect(error.details).toMatchObject({ reason: 'block_range', nodeLimit: 2000, rpcCode: -32000 });
+    expect(error.details).toMatchObject({ reason: 'block_range', nodeLimit: 2000, rpcCode: -32602 });
     expect(error.hint).toMatch(/at most 2000 blocks/);
   });
 

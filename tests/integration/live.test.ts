@@ -203,22 +203,17 @@ describe.skipIf(SKIP)('Elysium testnet (live)', () => {
   });
 
   it('simulate_call: dry-runs a zero-value HYPE transfer and estimates gas', async () => {
-    // Diagnostic for the failure seen on 2026-10-02 (success: false, cause not printed). That run
-    // simulated ArbOS (the sender of the block's first transaction) sending to itself. Re-run that
-    // exact case, plus a control from an ordinary fee-paying account, and print both in full.
-    // The assertion below is deliberately unchanged until the cause is understood.
-    const cases = [
-      { label: 'reproduction: ArbOS sender -> itself', from: systemTx!.from },
-      { label: 'control: user fee payer -> itself', from: userTx!.from },
-    ];
-    const results: Record<string, Result> = {};
-    for (const c of cases) {
-      results[c.label] = await call('simulate_call', { from: c.from, to: c.from, value: '0' });
-      console.info(`[live] simulate_call ${c.label} (${c.from}):`, JSON.stringify(results[c.label], null, 2));
-    }
-    const data = ok(results[cases[0]!.label]!);
+    const data = ok(await call('simulate_call', { from: userTx!.from, to: userTx!.from, value: '0' }));
     expect(data.success).toBe(true);
     expect(BigInt(data.gasEstimate)).toBeGreaterThanOrEqual(21_000n);
+  });
+
+  it('simulate_call: reports a revert for a call to an ArbOS address', async () => {
+    // ArbOS addresses hold the placeholder code 0xfe (INVALID), so any call to one reverts.
+    const data = ok(await call('simulate_call', { from: systemTx!.from, to: systemTx!.from, value: '0' }));
+    expect(data.success).toBe(false);
+    expect(data.revert).not.toBeNull();
+    expect(data.gasEstimate).toBeNull();
   });
 
   it('get_logs: enforces the local cap, and maps any node-side range rejection to RANGE_TOO_LARGE', async () => {
