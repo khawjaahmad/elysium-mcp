@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { formatEther } from 'viem';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { buildChain } from './chain.js';
 import { ExplorerClient } from './explorer/client.js';
@@ -37,7 +38,21 @@ async function main(): Promise<void> {
   if (config.explorerApiUrl) {
     logger.info(`Explorer tools enabled at ${redactUrl(config.explorerApiUrl)} (undocumented API)`);
   }
-  if (config.enableWrites) logger.warn('ENABLE_WRITES is set, but write tools are not implemented in this version.');
+  // Nothing in this process needs the raw key after loadConfig; keep it out of the environment.
+  delete process.env.ELYSIUM_PRIVATE_KEY;
+  if (config.writeAccount) {
+    logger.warn(
+      `Write tools ENABLED: sending from ${config.writeAccount.address} on chain ${config.chainId}; ` +
+        `MAX_SEND_HYPE=${formatEther(config.maxSendWei)}, MAX_FEE_HYPE=${formatEther(config.maxFeeWei)}, ` +
+        `WRITE_ALLOWLIST=${config.writeAllowlist ? config.writeAllowlist.join(',') : 'unset (any address)'}`,
+    );
+    if (config.explorerApiUrl) {
+      logger.warn(
+        'Write tools and explorer tools are both enabled. Explorer data is third-party text that could carry ' +
+          'instructions aimed at the agent (prompt injection); keep tool-call approval on for the write tools.',
+      );
+    }
+  }
 
   const ctx = buildContext(config, logger);
   await verifyChain(ctx);

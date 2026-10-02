@@ -3,6 +3,9 @@ import { ConfigError, isLoopbackHost, loadConfig, redactUrl } from '../../src/co
 
 const BASE = { ELYSIUM_RPC_URL: 'https://testnet-rpc.elysium.kinetiq.xyz', ELYSIUM_CHAIN_ID: '99801' };
 const TOKEN = 'a-sufficiently-long-token';
+// Anvil's first well-known test key. Never use it with real funds.
+const KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
+const WRITES = { ENABLE_WRITES: 'true', ELYSIUM_PRIVATE_KEY: KEY };
 
 describe('loadConfig', () => {
   it('applies documented defaults', () => {
@@ -22,6 +25,11 @@ describe('loadConfig', () => {
       httpToken: undefined,
       logLevel: 'info',
       enableWrites: false,
+      writeAccount: undefined,
+      maxSendWei: 10_000_000_000_000_000n, // 0.01 HYPE
+      maxFeeWei: 1_000_000_000_000_000n, // 0.001 HYPE
+      writeAllowlist: undefined,
+      writeReceiptTimeoutMs: 30_000,
       explorerApiUrl: undefined,
       explorerTimeoutMs: 10_000,
       explorerRetryCount: 2,
@@ -46,10 +54,68 @@ describe('loadConfig', () => {
   });
 
   it('parses numbers and booleans strictly', () => {
-    const c = loadConfig({ ...BASE, MAX_LOG_BLOCK_RANGE: '500', RPC_RATE_LIMIT_RPS: '2.5', ENABLE_WRITES: '1' });
+    const c = loadConfig({
+      ...BASE,
+      ...WRITES,
+      MAX_LOG_BLOCK_RANGE: '500',
+      RPC_RATE_LIMIT_RPS: '2.5',
+      ENABLE_WRITES: '1',
+    });
     expect(c).toMatchObject({ maxLogBlockRange: 500, rpcRateLimitRps: 2.5, enableWrites: true });
     expect(() => loadConfig({ ...BASE, ENABLE_WRITES: 'yes' })).toThrow(ConfigError);
     expect(() => loadConfig({ ...BASE, MAX_LOG_BLOCK_RANGE: '0' })).toThrow(ConfigError);
+  });
+
+  describe('write settings', () => {
+    it('requires a valid private key when writes are enabled, and never echoes it', () => {
+      expect(() => loadConfig({ ...BASE, ENABLE_WRITES: 'true' })).toThrow(/requires ELYSIUM_PRIVATE_KEY/);
+      for (const bad of [KEY.slice(0, -2), `${KEY}00`, KEY.replace('ac', 'zz'), `0x${'0'.repeat(64)}`]) {
+        let message = '';
+        try {
+          loadConfig({ ...BASE, ENABLE_WRITES: 'true', ELYSIUM_PRIVATE_KEY: bad });
+        } catch (err) {
+          expect(err).toBeInstanceOf(ConfigError);
+          expect((err as Error).cause).toBeUndefined();
+          message = (err as Error).message;
+        }
+        expect(message).toMatch(/ELYSIUM_PRIVATE_KEY/);
+        expect(message.toLowerCase()).not.toContain(bad.replace(/^0x/, '').toLowerCase().slice(0, 16));
+      }
+    });
+
+    it('loads the signing account only when writes are enabled', () => {
+      const c = loadConfig({ ...BASE, ...WRITES });
+      expect(c.writeAccount?.address).toBe('0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266');
+      expect(loadConfig({ ...BASE, ELYSIUM_PRIVATE_KEY: KEY }).writeAccount).toBeUndefined();
+      // The key also loads without the 0x prefix.
+      expect(loadConfig({ ...BASE, ...WRITES, ELYSIUM_PRIVATE_KEY: KEY.slice(2) }).writeAccount?.address).toBe(
+        c.writeAccount?.address,
+      );
+    });
+
+    it('refuses writes on any chain other than 99801', () => {
+      expect(() => loadConfig({ ...BASE, ...WRITES, ELYSIUM_CHAIN_ID: '1' })).toThrow(/only allowed on chain 99801/);
+      // Reads on another chain are still fine.
+      expect(loadConfig({ ...BASE, ELYSIUM_CHAIN_ID: '1' }).chainId).toBe(1);
+    });
+
+    it('parses the caps as HYPE and the allowlist as addresses', () => {
+      const c = loadConfig({
+        ...BASE,
+        MAX_SEND_HYPE: '1.5',
+        MAX_FEE_HYPE: '0',
+        WRITE_ALLOWLIST: ' 0x1111111111111111111111111111111111111111 ,0x2222222222222222222222222222222222222222',
+      });
+      expect(c).toMatchObject({ maxSendWei: 1_500_000_000_000_000_000n, maxFeeWei: 0n });
+      expect(c.writeAllowlist).toEqual([
+        '0x1111111111111111111111111111111111111111',
+        '0x2222222222222222222222222222222222222222',
+      ]);
+      expect(loadConfig({ ...BASE, WRITE_ALLOWLIST: '' }).writeAllowlist).toBeUndefined();
+      expect(() => loadConfig({ ...BASE, WRITE_ALLOWLIST: '0x1234' })).toThrow(/WRITE_ALLOWLIST/);
+      expect(() => loadConfig({ ...BASE, MAX_SEND_HYPE: '-1' })).toThrow(/MAX_SEND_HYPE/);
+      expect(() => loadConfig({ ...BASE, MAX_FEE_HYPE: '1e18' })).toThrow(/MAX_FEE_HYPE/);
+    });
   });
 
   describe('HTTP transport safety rules', () => {
@@ -66,10 +132,10 @@ describe('loadConfig', () => {
     });
 
     it('requires a token when writes are enabled over HTTP, even on loopback', () => {
-      expect(() => loadConfig({ ...http, ENABLE_WRITES: 'true' })).toThrow(/ENABLE_WRITES=true over HTTP/);
-      expect(loadConfig({ ...http, ENABLE_WRITES: 'true', MCP_HTTP_TOKEN: TOKEN }).enableWrites).toBe(true);
+      expect(() => loadConfig({ ...http, ...WRITES })).toThrow(/ENABLE_WRITES=true over HTTP/);
+      expect(loadConfig({ ...http, ...WRITES, MCP_HTTP_TOKEN: TOKEN }).enableWrites).toBe(true);
       // stdio is unaffected.
-      expect(loadConfig({ ...BASE, ENABLE_WRITES: 'true' }).enableWrites).toBe(true);
+      expect(loadConfig({ ...BASE, ...WRITES }).enableWrites).toBe(true);
     });
 
     it('rejects short tokens and treats an empty token as unset', () => {

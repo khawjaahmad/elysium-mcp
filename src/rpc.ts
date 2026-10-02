@@ -170,6 +170,8 @@ export type ChainClient = Pick<
   | 'readContract'
   | 'call'
   | 'estimateGas'
+  | 'estimateFeesPerGas'
+  | 'getTransactionCount'
   | 'request'
 >;
 

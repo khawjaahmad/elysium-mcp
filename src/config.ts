@@ -1,5 +1,8 @@
 import { isIP } from 'node:net';
+import { getAddress, isAddress, parseEther, type Address } from 'viem';
+import { privateKeyToAccount, type LocalAccount } from 'viem/accounts';
 import { z } from 'zod';
+import { ELYSIUM_TESTNET_CHAIN_ID } from './chain.js';
 
 const bool = z
   .enum(['true', 'false', '1', '0', ''])
@@ -7,6 +10,14 @@ const bool = z
   .transform((v) => v === 'true' || v === '1');
 
 const positiveInt = (fallback: number) => z.coerce.number().int().positive().default(fallback);
+
+/** A HYPE amount such as "0.01", converted to wei. */
+const hypeAmount = (fallback: string) =>
+  z
+    .string()
+    .default(fallback)
+    .refine((v) => /^\d+(\.\d{1,18})?$/.test(v), 'must be a HYPE amount such as 0.01 (at most 18 decimals)')
+    .transform((v) => parseEther(v));
 
 const envSchema = z.object({
   ELYSIUM_RPC_URL: z
@@ -47,6 +58,17 @@ const envSchema = z.object({
   EXPLORER_RATE_LIMIT_RPS: z.coerce.number().positive().default(5),
 
   ENABLE_WRITES: bool,
+  // Never echoed back: validated by hand in loadConfig so no error message can contain it.
+  ELYSIUM_PRIVATE_KEY: z.string().optional(),
+  MAX_SEND_HYPE: hypeAmount('0.01'),
+  MAX_FEE_HYPE: hypeAmount('0.001'),
+  WRITE_ALLOWLIST: z
+    .string()
+    .optional()
+    .transform((v) => (v === undefined || v.trim() === '' ? undefined : v.split(',').map((a) => a.trim())))
+    .refine((list) => list === undefined || list.every((a) => isAddress(a)), 'must be comma-separated 0x addresses')
+    .transform((list) => list?.map((a) => getAddress(a))),
+  WRITE_RECEIPT_TIMEOUT_MS: positiveInt(30_000),
 });
 
 export interface Config {
@@ -65,6 +87,15 @@ export interface Config {
   httpToken: string | undefined;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
   enableWrites: boolean;
+  /** Signs write transactions. Set only when writes are enabled. Holds no readable copy of the key. */
+  writeAccount: LocalAccount | undefined;
+  /** Per-transaction cap on the HYPE value sent, in wei. */
+  maxSendWei: bigint;
+  /** Per-transaction cap on gas limit × max fee per gas, in wei. */
+  maxFeeWei: bigint;
+  /** When set, the only addresses write tools may send to or call. */
+  writeAllowlist: Address[] | undefined;
+  writeReceiptTimeoutMs: number;
   explorerApiUrl: string | undefined;
   explorerTimeoutMs: number;
   explorerRetryCount: number;
@@ -112,11 +143,22 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     httpToken: e.MCP_HTTP_TOKEN,
     logLevel: e.LOG_LEVEL,
     enableWrites: e.ENABLE_WRITES,
+    writeAccount: e.ENABLE_WRITES ? loadWriteAccount(e.ELYSIUM_PRIVATE_KEY) : undefined,
+    maxSendWei: e.MAX_SEND_HYPE,
+    maxFeeWei: e.MAX_FEE_HYPE,
+    writeAllowlist: e.WRITE_ALLOWLIST,
+    writeReceiptTimeoutMs: e.WRITE_RECEIPT_TIMEOUT_MS,
     explorerApiUrl: e.EXPLORER_API_URL,
     explorerTimeoutMs: e.EXPLORER_TIMEOUT_MS,
     explorerRetryCount: e.EXPLORER_RETRY_COUNT,
     explorerRateLimitRps: e.EXPLORER_RATE_LIMIT_RPS,
   };
+
+  if (config.enableWrites && config.chainId !== ELYSIUM_TESTNET_CHAIN_ID) {
+    throw new ConfigError(
+      `ENABLE_WRITES=true is only allowed on chain ${ELYSIUM_TESTNET_CHAIN_ID} (Elysium testnet); ELYSIUM_CHAIN_ID is ${config.chainId}.`,
+    );
+  }
 
   if (config.transport === 'http') {
     if (!config.httpToken && !isLoopbackHost(config.httpHost)) {
@@ -130,6 +172,25 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
 
   return config;
+}
+
+/**
+ * Turns ELYSIUM_PRIVATE_KEY into a signing account. Error messages never
+ * include the value, and the cause is dropped so it cannot leak through one.
+ */
+function loadWriteAccount(key: string | undefined): LocalAccount {
+  if (key === undefined || key === '') {
+    throw new ConfigError('ENABLE_WRITES=true requires ELYSIUM_PRIVATE_KEY to be set.');
+  }
+  const hex = key.trim().startsWith('0x') ? key.trim() : `0x${key.trim()}`;
+  if (!/^0x[0-9a-fA-F]{64}$/.test(hex)) {
+    throw new ConfigError('ELYSIUM_PRIVATE_KEY must be 32 bytes of hex (64 hex characters, optionally 0x-prefixed).');
+  }
+  try {
+    return privateKeyToAccount(hex as `0x${string}`);
+  } catch {
+    throw new ConfigError('ELYSIUM_PRIVATE_KEY is not a valid secp256k1 private key.');
+  }
 }
 
 /** RPC URL reduced to its origin, so API keys in paths or queries never reach logs. */
