@@ -133,8 +133,68 @@ result. Nothing is signed, nothing is recorded, and it costs nothing. It works f
 also show what a state-changing call _would_ do: that is `simulate_call`. `eth_estimateGas` likewise
 reports how much gas the call would need.
 
-Sending a real transaction requires a signature from a private key. That is phase 2 and is not in this
-version.
+Sending a real transaction is different: it must be **signed** with a private key, it is recorded on the
+chain for good, and it costs a fee even if it fails. `send_native` and `write_contract` do this when the
+operator enables writes. The next four sections cover what that involves.
+
+## Private keys
+
+An EOA is a key pair. The **private key** is 32 random bytes (64 hex characters). The public key is
+derived from it, and the address is the last 20 bytes of the keccak-256 hash of the public key. Going
+forward is easy; going back (address → key) is infeasible. That is the whole security model:
+
+- **Whoever has the private key controls the account.** There is no password reset, no bank to call, and
+  no way to reverse a transaction signed with a stolen key.
+- The key is never sent to the node. Only signatures made with it are.
+
+This server reads the key from `ELYSIUM_PRIVATE_KEY` at startup, turns it into a signing object, and
+removes it from the process environment. It is never a tool input, never logged, and never returned. Tools
+see only the derived address.
+
+## Signing and the chain ID
+
+A transaction is a small record: `to`, `value`, `data`, `nonce`, gas fields and the **chain ID**. The client
+serialises it, hashes it, and signs the hash with the private key (ECDSA on the secp256k1 curve). Anyone can
+recover the sender's address from the signature, so the node knows who sent it without seeing the key.
+
+The **transaction hash** is the keccak-256 hash of the signed bytes, so it is known before the transaction
+is sent. This server uses that to report the hash even when a send fails or times out.
+
+Because the chain ID is inside the signed bytes (EIP-155), a transaction signed for Elysium testnet
+(`99801`) is invalid on every other chain. The write tools also refuse to run unless the node reports
+`99801`, and the server refuses to start with writes enabled on any other configured chain.
+
+## Nonces
+
+Every account has a **nonce**: the number of transactions it has sent. Each new transaction must carry the
+next nonce exactly. This orders an account's transactions and stops a signed transaction from being
+replayed.
+
+- **nonce too low**: that nonce is already used (an earlier transaction was mined, or the same one was
+  sent twice).
+- **nonce too high**: there is a gap; the node waits for the missing nonce first.
+- **replacement transaction underpriced**: a pending transaction already has this nonce, and the new one
+  doesn't pay enough more to replace it.
+
+The server reads the next nonce from the node (`eth_getTransactionCount` with `pending`) just before
+signing, and sends one transaction at a time, so two tool calls can't pick the same nonce. Two separate
+server processes sharing a key can still collide; they get `NONCE_ERROR`.
+
+## Gas limits
+
+Besides the price per gas (see [Gas, base fee and fees](#gas-base-fee-and-fees)), every transaction sets
+a **gas limit**: the most gas it may use. If execution needs more, it fails with "out of gas", its changes
+are undone, and the fee for the gas used is still charged. Gas left unused is not charged.
+
+EIP-1559 transactions set two price fields:
+
+- `maxFeePerGas`: the most the sender will pay per gas, base fee included;
+- `maxPriorityFeePerGas`: the tip, which Arbitrum chains ignore.
+
+So **gasLimit × maxFeePerGas** is the most a transaction can ever cost in fees. The server sets the gas limit
+to `eth_estimateGas` plus 20%. On Arbitrum the estimate includes the parent-chain data cost, which can move
+between estimate and inclusion. It then refuses to send if that maximum fee exceeds `MAX_FEE_HYPE`. The
+actual fee, `gasUsed × effectiveGasPrice`, is usually far lower.
 
 ## Reverts
 
