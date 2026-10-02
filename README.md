@@ -694,11 +694,43 @@ First release, in this order:
       only works from a public repository, so this comes before the tag.
 - [ ] Enable private vulnerability reporting (Settings → Security → Advisories → Private vulnerability
       reporting → Enable). [SECURITY.md](SECURITY.md) relies on it.
-- [ ] Add the `NPM_TOKEN` repository secret (Settings → Secrets and variables → Actions → New repository
-      secret). Use a granular npm access token with read and write access to packages.
+- [ ] Create an npm token for the first publish. On npmjs.com: profile picture → **Access Tokens** →
+      **Generate New Token**. Set these fields:
+  - **Token name**: e.g. `elysium-chain-mcp first publish`.
+  - **Bypass two-factor authentication**: ticked. It is off by default, and without it the workflow can't
+    publish while 2FA is on.
+  - **Packages and scopes**: permission **Read and write (publish and stage)**, on **All Packages**. The
+    package doesn't exist yet, so it can't be selected.
+  - **Expiration**: the shortest option in the dropdown. **Custom** also works, with a date at least 1 day
+    ahead.
+
+  Then click **Generate Token** and copy it.
+
+- [ ] Add it as the `NPM_TOKEN` repository secret (Settings → Secrets and variables → Actions → New
+      repository secret).
 - [ ] Push the tag from an up-to-date `main`:
       `git checkout main && git pull && git tag v0.1.0 && git push origin v0.1.0`. Then watch the
       Publish run under Actions.
+- [ ] Right after the first publish, switch to [trusted publishing](https://docs.npmjs.com/trusted-publishers).
+      npm then authenticates the workflow through GitHub's OIDC, so no long-lived token is stored anywhere.
+      This is needed anyway: npm plans to
+      [remove direct publishing with bypass-2FA tokens in January 2027](https://github.blog/changelog/2026-07-31-restricting-npm-bypass-2fa-granular-access-tokens/).
+  1. On npmjs.com, go to the package's **Settings** → **Trusted Publisher** → **GitHub Actions**. Fill in
+     **Organization or user** `khawjaahmad`, **Repository** `elysium-mcp` and **Workflow filename**
+     `publish.yml` (the filename only), and leave **Environment name** empty. This only works for a package
+     that exists, which is why it comes after the first publish. The `repository.url` in `package.json`
+     must match the repository exactly, and it already does.
+  2. In a PR, change `.github/workflows/publish.yml`:
+     - Delete the `env:` block with `NODE_AUTH_TOKEN` from the publish step.
+     - Make sure npm is at least 11.5.1, on Node 22.14.0 or newer. `node-version: 22` already resolves to a
+       new enough Node, but it ships npm 10, so add `- run: npm install -g npm@^11.5.1` before `npm ci`.
+     - Keep `id-token: write`. `--provenance` becomes optional, because trusted publishing adds provenance
+       automatically.
+  3. Revoke the token on npmjs.com (**Access Tokens** → delete it), and delete the `NPM_TOKEN` secret on
+     GitHub.
+  4. Optional but recommended: package **Settings** → **Publishing access** → **Require two-factor
+     authentication and disallow tokens** → **Update Package Settings**. Trusted publishing keeps working,
+     because it doesn't use a token.
 
 For later releases: bump `version` in `package.json` and add a [CHANGELOG.md](CHANGELOG.md) entry in a PR,
 merge it, then tag `main`.
