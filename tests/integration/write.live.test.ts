@@ -104,7 +104,7 @@ describe.skipIf(SKIP || !FUNDED_KEY)('Elysium testnet writes, funded key (live)'
     expect(BigInt(sent.receipt.fee.wei)).toBeGreaterThan(0n);
 
     const tx = ok(await call('get_transaction', { hash: sent.hash }));
-    expect(tx.from.toLowerCase()).toBe(w.self.toLowerCase());
+    expect(tx.transaction.from.toLowerCase()).toBe(w.self.toLowerCase());
 
     const haystack = (JSON.stringify([preview, sent, tx]) + w.logs.join('\n')).toLowerCase();
     expect(haystack).not.toContain(FUNDED_KEY!.replace(/^0x/, '').toLowerCase());
