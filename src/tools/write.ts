@@ -20,6 +20,14 @@ import { decodeRevert } from './simulateCall.js';
 /** Added on top of eth_estimateGas, which on Arbitrum includes a parent-chain data cost that can move. */
 const GAS_LIMIT_BUFFER_PERCENT = 20n;
 const RECEIPT_POLL_MS = 500;
+/**
+ * How to look for a transaction after a failed send: a just-accepted one may
+ * take a moment to become visible. 4 tries, 500 ms apart: about 1.5 s.
+ * Exported so unit tests can shorten the delay.
+ */
+export const sendLookup = { attempts: 4, delayMs: 500 };
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const dryRunInput = z
   .boolean()
@@ -154,11 +162,15 @@ async function sendSigned(ctx: ToolContext, serialized: Hex): Promise<Hash> {
   // Look it up after any failure, not only uncertain ones: if a timed-out first
   // attempt was accepted and mined, the transport's retry gets "nonce too low".
   let lookupFailed = false;
-  try {
-    await ctx.client.getTransaction({ hash });
-    return hash;
-  } catch (err) {
-    lookupFailed = toToolError(err).code !== 'NOT_FOUND';
+  for (let attempt = 0; attempt < sendLookup.attempts; attempt++) {
+    if (attempt > 0) await sleep(sendLookup.delayMs);
+    try {
+      await ctx.client.getTransaction({ hash });
+      return hash;
+    } catch (err) {
+      // The last attempt decides: "not found" vs. "could not tell".
+      lookupFailed = toToolError(err).code !== 'NOT_FOUND';
+    }
   }
 
   const e = classifyWriteError(sendError);
@@ -192,7 +204,7 @@ async function waitForReceipt(ctx: ToolContext, hash: Hash): Promise<Transaction
     }
     const left = deadline - Date.now();
     if (left <= 0) return null;
-    await new Promise((resolve) => setTimeout(resolve, Math.min(RECEIPT_POLL_MS, left)));
+    await sleep(Math.min(RECEIPT_POLL_MS, left));
   }
 }
 

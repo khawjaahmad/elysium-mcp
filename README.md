@@ -545,7 +545,8 @@ receive the transaction, and a retry would sign a new one with a fresh nonce: a 
 2. otherwise looks the transaction up by its hash, which is known before sending. If the node has it, the
    tool carries on as if the send succeeded and returns `success`, `reverted` or `pending`. It looks
    after every failure, not only timeouts: a timed-out attempt may have been mined, and the transport's
-   retry then gets "nonce too low";
+   retry then gets "nonce too low". A just-accepted transaction may not be visible at once, so it tries
+   4 times, 500 ms apart (about 1.5 s);
 3. if the node doesn't have it and the failure was a definite rejection (insufficient funds, nonce,
    underpriced, other node errors), returns that code;
 4. otherwise (timeout, connection failure, rate limit, or the lookup itself failed) returns

@@ -10,10 +10,11 @@ import {
   recoverTransactionAddress,
   type Hex,
 } from 'viem';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { loadConfig, type Config } from '../../src/config.js';
 import { createLogger } from '../../src/logger.js';
 import { sendNative } from '../../src/tools/sendNative.js';
+import { sendLookup } from '../../src/tools/write.js';
 import { createHarness, expectError, expectOk, TEST_ENV, testConfig } from './helpers/harness.js';
 import {
   ALICE,
@@ -267,6 +268,13 @@ describe('write tools', () => {
   });
 
   describe('after signing', () => {
+    // Keep the not-found cases fast; the timing test sets the real delay itself.
+    beforeEach(() => {
+      sendLookup.delayMs = 1;
+    });
+    afterAll(() => {
+      sendLookup.delayMs = 500;
+    });
     const throwing = (err: RpcFailure) => () => {
       throw err;
     };
@@ -307,17 +315,41 @@ describe('write tools', () => {
       expect(data).toMatchObject({ status: 'success', hash: keccak256(signedTxs()[0]!) });
     });
 
-    it('treats a retried send that comes back "nonce too low" as sent when the node has it', async () => {
+    it('treats "nonce too low" on the transport retry after a timeout as sent when the original is found', async () => {
       let n = 0;
       await setup({
+        // The first attempt times out (the node accepted and mined it); the transport's retry is rejected.
         eth_sendRawTransaction: () =>
-          ++n === 1
-            ? new HttpFailure(503)
-            : throwing(new RpcFailure(-32000, 'nonce too low: next nonce 8, tx nonce 7'))(),
+          ++n === 1 ? HANG : throwing(new RpcFailure(-32000, 'nonce too low: next nonce 8, tx nonce 7'))(),
         eth_getTransactionByHash: found,
       });
       const data = expectOk(await h!.call('send_native', { to: BOB, value: '1', dry_run: false }));
+      expect(h!.rpc.count('eth_sendRawTransaction')).toBe(2);
+      expect(signedTxs()).toHaveLength(1);
       expect(data).toMatchObject({ status: 'success', hash: keccak256(signedTxs()[0]!) });
+    });
+
+    it('keeps looking for about 1.5 s before giving up, since a new transaction may not be visible yet', async () => {
+      sendLookup.delayMs = 500;
+      let lookups = 0;
+      await setup({
+        eth_sendRawTransaction: () => new HttpFailure(503),
+        // Visible only on the third lookup.
+        eth_getTransactionByHash: (params) => (++lookups < 3 ? null : found(params)),
+      });
+      const started = Date.now();
+      const data = expectOk(await h!.call('send_native', { to: BOB, value: '1', dry_run: false }));
+      expect(data.status).toBe('success');
+      expect(lookups).toBe(3);
+      expect(Date.now() - started).toBeGreaterThanOrEqual(1000);
+    });
+
+    it('gives up after 4 lookups', async () => {
+      await setup({ eth_sendRawTransaction: () => new HttpFailure(503) });
+      expect(expectError(await h!.call('send_native', { to: BOB, value: '1', dry_run: false })).code).toBe(
+        'SEND_STATUS_UNKNOWN',
+      );
+      expect(h!.rpc.count('eth_getTransactionByHash')).toBe(4);
     });
 
     it.each([
