@@ -9,14 +9,15 @@
  */
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { formatUnits } from 'viem';
+import { formatUnits, numberToHex, type PublicClient } from 'viem';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildChain } from '../../src/chain.js';
 import { loadConfig } from '../../src/config.js';
-import type { ToolErrorPayload } from '../../src/errors.js';
+import { rpcCode, rpcMessage, revertDataFrom, type ToolErrorPayload } from '../../src/errors.js';
 import { silentLogger } from '../../src/logger.js';
 import { ChainGuard, createElysiumClient, RateLimiter } from '../../src/rpc.js';
 import { createServer } from '../../src/server.js';
+import { classifyGetLogsError } from '../../src/tools/getLogs.js';
 
 const SKIP = ['true', '1'].includes(process.env.SKIP_INTEGRATION ?? '');
 
@@ -35,6 +36,7 @@ describe.skipIf(SKIP)('Elysium testnet (live)', () => {
     ...process.env,
   });
   let mcp: Client;
+  let rawClient: PublicClient;
   let call: (name: string, args?: Record<string, unknown>) => Promise<Result>;
 
   // Discovered during the run.
@@ -52,6 +54,7 @@ describe.skipIf(SKIP)('Elysium testnet (live)', () => {
     const chain = buildChain(config);
     const limiter = new RateLimiter(config.rpcRateLimitRps);
     const client = createElysiumClient(config, chain, { limiter, logger: silentLogger });
+    rawClient = client;
     const server = createServer({
       client,
       config,
@@ -173,6 +176,46 @@ describe.skipIf(SKIP)('Elysium testnet (live)', () => {
     });
     console.info('[live] full-cap unfiltered query:', atCap.ok ? `ok, ${atCap.data.totalMatched} logs` : atCap.error);
     if (!atCap.ok) expect(['RANGE_TOO_LARGE', 'RPC_TIMEOUT']).toContain(atCap.error.code);
+  });
+
+  it('diagnostic: records what the RPC itself returns for oversized eth_getLogs queries', async () => {
+    // Bypasses the tool's local cap and talks to the node directly, so the
+    // node's own limits and error wording are observed rather than assumed.
+    const NO_MATCH_TOPIC = `0x${'0'.repeat(64)}`;
+    const probes = [
+      // Whole chain, with a topic that matches nothing: exercises a block-range limit without a big response.
+      { label: 'whole chain, no-match topic', fromBlock: 0n, topics: [NO_MATCH_TOPIC] },
+      // 100k blocks of Transfer logs: exercises a result-count / response-size limit.
+      {
+        label: '100k blocks, Transfer topic',
+        fromBlock: latest > 100_000n ? latest - 99_999n : 0n,
+        topics: [TRANSFER_TOPIC],
+      },
+    ];
+    for (const probe of probes) {
+      const span = latest - probe.fromBlock + 1n;
+      try {
+        const logs = (await rawClient.request({
+          method: 'eth_getLogs',
+          params: [{ fromBlock: numberToHex(probe.fromBlock), toBlock: numberToHex(latest), topics: probe.topics }],
+        } as never)) as unknown[];
+        console.info(`[live] RPC ACCEPTED eth_getLogs (${probe.label}, ${span} blocks): ${logs.length} logs`);
+      } catch (err) {
+        const mapped = classifyGetLogsError(err, probe.fromBlock, latest);
+        console.info(
+          `[live] RPC REJECTED eth_getLogs (${probe.label}, ${span} blocks):`,
+          JSON.stringify({
+            rpcCode: rpcCode(err),
+            rpcMessage: rpcMessage(err),
+            rpcData: revertDataFrom(err),
+            mappedTo: mapped.code,
+          }),
+        );
+        // A node-side rejection that is not a transport problem must be recognised as RANGE_TOO_LARGE.
+        if (!mapped.retryable)
+          expect(mapped.code, `unrecognised node wording: ${rpcMessage(err)}`).toBe('RANGE_TOO_LARGE');
+      }
+    }
   });
 
   it('returns typed errors for missing data', async () => {
