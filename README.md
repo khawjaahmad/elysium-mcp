@@ -102,7 +102,7 @@ claude mcp add --transport http elysium http://127.0.0.1:3000/mcp \
 | `RPC_RETRY_COUNT`         | `3`          | Retries after the first attempt, for timeouts, connection errors, HTTP 408/429/5xx and JSON-RPC rate-limit errors only.                                       |
 | `RPC_RETRY_BASE_DELAY_MS` | `250`        | Base for exponential backoff with full jitter (capped at 10 s). A `Retry-After` header takes precedence.                                                      |
 | `RPC_RATE_LIMIT_RPS`      | `10`         | Client-side limit on RPC requests per second (token bucket; retries count too).                                                                               |
-| `MAX_LOG_BLOCK_RANGE`     | `10000`      | Maximum blocks per `get_logs` query (about 17–33 minutes at 100–200 ms blocks).                                                                               |
+| `MAX_LOG_BLOCK_RANGE`     | `2000`       | Maximum blocks per unfiltered `get_logs` query (about 3–7 minutes at 100–200 ms blocks). Queries with an address or topic filter have no block limit.         |
 | `BLOCK_TIME_SAMPLE_SIZE`  | `1000`       | Blocks `get_chain_status` measures block time over.                                                                                                           |
 | `MCP_TRANSPORT`           | `stdio`      | `stdio` or `http`.                                                                                                                                            |
 | `MCP_HTTP_HOST`           | `127.0.0.1`  | HTTP bind address.                                                                                                                                            |
@@ -263,8 +263,12 @@ return value: a single value, an array for several outputs, or an object for str
 **Output:** `fromBlock`, `toBlock`, `count`, `totalMatched`, `truncated`, and `logs` (same shape as in
 `get_transaction`).
 
-**Errors:** `RANGE_TOO_LARGE` when the range exceeds `MAX_LOG_BLOCK_RANGE`, with a `hint` showing how to
-split it.
+**Range limits:** a query with no `address` and no non-null topic (from `event` or `topics`) may cover at most
+`MAX_LOG_BLOCK_RANGE` blocks (default 2,000, matching the testnet RPC). A filtered query may cover any range; the
+RPC then returns at most 10,000 logs. Ranges are not split automatically.
+
+**Errors:** `RANGE_TOO_LARGE` when an unfiltered range exceeds `MAX_LOG_BLOCK_RANGE`, with a `hint` showing how to
+split it or add a filter.
 
 The Elysium testnet RPC also enforces its own limits. These come from the RPC provider, not from Nitro, so they
 may change or differ on mainnet. The server recognises the two rejections observed on the testnet (2026-10-02)

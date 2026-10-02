@@ -14,7 +14,7 @@ describe('loadConfig', () => {
       rpcRetryCount: 3,
       rpcRetryBaseDelayMs: 250,
       rpcRateLimitRps: 10,
-      maxLogBlockRange: 10_000,
+      maxLogBlockRange: 2_000,
       blockTimeSampleSize: 1000,
       transport: 'stdio',
       httpHost: '127.0.0.1',
