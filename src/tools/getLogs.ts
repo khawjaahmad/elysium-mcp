@@ -127,8 +127,9 @@ export const getLogs = defineTool({
   title: 'Get event logs',
   description:
     'Query event logs over a block range. Filter by contract address and either an event signature (with optional ' +
-    'indexed-argument values) or raw topics. The range is capped at MAX_LOG_BLOCK_RANGE blocks (default 10,000, ' +
-    'about 17-33 minutes on Elysium); split longer ranges into several calls.',
+    'indexed-argument values) or raw topics. Without an address or topic filter the range is capped at ' +
+    'MAX_LOG_BLOCK_RANGE blocks (default 2,000, about 3-7 minutes on Elysium); with one, any range is allowed. ' +
+    'Either way the RPC returns at most 10,000 logs per query; split longer ranges or add filters if you hit that.',
   inputSchema: {
     fromBlock: z
       .union([z.number().int().nonnegative(), z.string()])
@@ -226,9 +227,16 @@ export const getLogs = defineTool({
     }
     const span = toBlock - fromBlock + 1n;
     const max = BigInt(config.maxLogBlockRange);
-    if (span > max) {
+    // The RPC limits unfiltered queries to 2,000 blocks but accepts any range with an address or topic
+    // filter (capping the result at 10,000 logs instead), so only unfiltered ranges are capped here.
+    const filtered =
+      (Array.isArray(address) ? address.length > 0 : address !== undefined) ||
+      (topics ?? []).some((t) => t !== null && !(Array.isArray(t) && t.length === 0));
+    if (!filtered && span > max) {
       throw new ToolError('RANGE_TOO_LARGE', `The range covers ${span} blocks; the maximum is ${max}.`, {
-        hint: `Split the query into ranges of at most ${max} blocks, e.g. ${fromBlock}-${fromBlock + max - 1n}.`,
+        hint:
+          `Split the query into ranges of at most ${max} blocks, e.g. ${fromBlock}-${fromBlock + max - 1n}, ` +
+          'or filter by address, event or topics (filtered queries have no block limit).',
         details: {
           fromBlock: fromBlock.toString(),
           toBlock: toBlock.toString(),

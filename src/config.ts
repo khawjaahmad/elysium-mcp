@@ -22,7 +22,7 @@ const envSchema = z.object({
   RPC_RETRY_COUNT: z.coerce.number().int().min(0).max(10).default(3),
   RPC_RETRY_BASE_DELAY_MS: positiveInt(250),
   RPC_RATE_LIMIT_RPS: z.coerce.number().positive().default(10),
-  MAX_LOG_BLOCK_RANGE: positiveInt(10_000),
+  MAX_LOG_BLOCK_RANGE: positiveInt(2_000),
   BLOCK_TIME_SAMPLE_SIZE: z.coerce.number().int().min(1).max(100_000).default(1000),
 
   MCP_TRANSPORT: z.enum(['stdio', 'http']).default('stdio'),

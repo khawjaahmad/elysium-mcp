@@ -77,6 +77,31 @@ describe('get_logs', () => {
     expectOk(await h.call('get_logs', { fromBlock: 1, toBlock: 100 }));
   });
 
+  it('caps unfiltered queries at 2,000 blocks by default, counting all-null topics as unfiltered', async () => {
+    const h = await createHarness({ eth_getLogs: () => [] });
+    close = h.close;
+    for (const filter of [{}, { topics: [null, null] }, { address: [] }]) {
+      const error = expectError(await h.call('get_logs', { fromBlock: 1, toBlock: 2001, ...filter }));
+      expect(error).toMatchObject({ code: 'RANGE_TOO_LARGE', details: { requested: '2001', max: '2000' } });
+      expect(error.hint).toMatch(/filter by address, event or topics/);
+    }
+    expect(h.rpc.count('eth_getLogs')).toBe(0);
+  });
+
+  it('sends filtered queries of any range to the node', async () => {
+    const h = await createHarness({ eth_getLogs: () => [] });
+    close = h.close;
+    for (const filter of [
+      { address: TOKEN },
+      { topics: [TRANSFER_TOPIC] },
+      { topics: [null, pad(ALICE.toLowerCase() as Hex)] },
+      { event: 'Transfer(address indexed from, address indexed to, uint256 value)' },
+    ]) {
+      expectOk(await h.call('get_logs', { fromBlock: 1, toBlock: 100_000, ...filter }));
+    }
+    expect(h.rpc.count('eth_getLogs')).toBe(4);
+  });
+
   // Exact messages returned by the Elysium testnet RPC (live run, 2026-10-02).
   it('maps the RPC block-range rejection to RANGE_TOO_LARGE with the node limit', async () => {
     const h = await createHarness({
