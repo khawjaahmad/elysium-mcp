@@ -26,7 +26,7 @@ import {
 } from './schemas.js';
 
 /** Fills errorName/errorArgs by decoding revert data against the ABI plus Error(string)/Panic(uint256). */
-function decodeRevert(revert: RevertInfo, abi: Abi | undefined): RevertInfo {
+export function decodeRevert(revert: RevertInfo, abi: Abi | undefined): RevertInfo {
   if (!revert.data || revert.data === '0x' || revert.errorName) return revert;
   try {
     const decoded = decodeErrorResult({ abi: abi ?? [], data: revert.data });

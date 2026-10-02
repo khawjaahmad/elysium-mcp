@@ -4,7 +4,7 @@ import { createPublicClient } from 'viem';
 import { buildChain } from '../../../src/chain.js';
 import { loadConfig, type Config } from '../../../src/config.js';
 import type { ToolErrorPayload } from '../../../src/errors.js';
-import { silentLogger } from '../../../src/logger.js';
+import { silentLogger, type Logger } from '../../../src/logger.js';
 import { ChainGuard, RateLimiter, resilientHttp } from '../../../src/rpc.js';
 import { ExplorerClient } from '../../../src/explorer/client.js';
 import { createServer } from '../../../src/server.js';
@@ -29,7 +29,7 @@ export type CallResult = { ok: true; data: Record<string, unknown> } | { ok: fal
 export async function createHarness(
   handlers: Record<string, Handler>,
   overrides: Partial<Config> = {},
-  options: { explorer?: ExplorerRoutes } = {},
+  options: { explorer?: ExplorerRoutes; logger?: Logger } = {},
 ) {
   const config = testConfig({
     rpcRetryBaseDelayMs: 1,
@@ -57,7 +57,7 @@ export async function createHarness(
     client,
     config,
     guard: new ChainGuard(client, config.chainId),
-    logger: silentLogger,
+    logger: options.logger ?? silentLogger,
     ...(explorer ? { explorer } : {}),
   });
 

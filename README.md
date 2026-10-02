@@ -5,8 +5,9 @@ and interact with **Elysium**, Kinetiq's Layer 2 for Hyperliquid.
 
 Elysium is a standard EVM chain (Arbitrum Orbit / Nitro) that uses **HYPE** as its native gas token. This
 server gives an agent typed, rate-limited, read-only access to it through eight RPC tools, plus seven optional
-explorer tools. Write tools
-(`send_native`, `write_contract`) are planned for phase 2 and are **not** in this version.
+explorer tools. Two optional [write tools](#write-tools-optional-testnet-only) (`send_native`,
+`write_contract`) can send transactions on the Elysium **testnet** only. They are off unless the operator
+enables them.
 
 > New to blockchains? [docs/CONCEPTS.md](docs/CONCEPTS.md) explains every concept this server relies on.
 
@@ -93,27 +94,32 @@ claude mcp add --transport http elysium http://127.0.0.1:3000/mcp \
 
 ## Environment variables
 
-| Variable                  | Default      | Description                                                                                                                                                   |
-| ------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ELYSIUM_RPC_URL`         | **required** | JSON-RPC endpoint (http/https). Only its origin is ever logged.                                                                                               |
-| `ELYSIUM_CHAIN_ID`        | **required** | Chain ID the endpoint must serve. Checked at startup and before the first tool call; a mismatch fails with `CHAIN_MISMATCH`.                                  |
-| `ELYSIUM_CHAIN_NAME`      | `Elysium`    | Display name only.                                                                                                                                            |
-| `RPC_TIMEOUT_MS`          | `10000`      | Timeout per RPC attempt.                                                                                                                                      |
-| `RPC_RETRY_COUNT`         | `3`          | Retries after the first attempt, for timeouts, connection errors, HTTP 408/429/5xx and JSON-RPC rate-limit errors only.                                       |
-| `RPC_RETRY_BASE_DELAY_MS` | `250`        | Base for exponential backoff with full jitter (capped at 10 s). A `Retry-After` header takes precedence.                                                      |
-| `RPC_RATE_LIMIT_RPS`      | `10`         | Client-side limit on RPC requests per second (token bucket; retries count too).                                                                               |
-| `MAX_LOG_BLOCK_RANGE`     | `2000`       | Maximum blocks per unfiltered `get_logs` query (about 3–7 minutes at 100–200 ms blocks). Queries with an address or topic filter have no block limit.         |
-| `BLOCK_TIME_SAMPLE_SIZE`  | `1000`       | Blocks `get_chain_status` measures block time over.                                                                                                           |
-| `MCP_TRANSPORT`           | `stdio`      | `stdio` or `http`.                                                                                                                                            |
-| `MCP_HTTP_HOST`           | `127.0.0.1`  | HTTP bind address.                                                                                                                                            |
-| `MCP_HTTP_PORT`           | `3000`       | HTTP port.                                                                                                                                                    |
-| `MCP_HTTP_TOKEN`          | unset        | Bearer token for HTTP, at least 16 characters. **Required** if the host is not loopback, and whenever `ENABLE_WRITES=true` over HTTP.                         |
-| `LOG_LEVEL`               | `info`       | `debug`, `info`, `warn` or `error`. Logs go to stderr only.                                                                                                   |
-| `ENABLE_WRITES`           | `false`      | Reserved for phase 2. It currently does nothing except trigger the HTTP token rule above.                                                                     |
-| `EXPLORER_API_URL`        | unset        | Enables the optional [explorer tools](#explorer-tools-optional-undocumented-api). No default. For the testnet explorer: `https://elysium.kinetiq.xyz/api/v2`. |
-| `EXPLORER_TIMEOUT_MS`     | `10000`      | Timeout per explorer request.                                                                                                                                 |
-| `EXPLORER_RETRY_COUNT`    | `2`          | Retries for explorer timeouts, connection errors, HTTP 408/429/5xx. A `Retry-After` header is honoured.                                                       |
-| `EXPLORER_RATE_LIMIT_RPS` | `5`          | Client-side limit on explorer requests per second.                                                                                                            |
+| Variable                   | Default      | Description                                                                                                                                                                         |
+| -------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ELYSIUM_RPC_URL`          | **required** | JSON-RPC endpoint (http/https). Only its origin is ever logged.                                                                                                                     |
+| `ELYSIUM_CHAIN_ID`         | **required** | Chain ID the endpoint must serve. Checked at startup and before the first tool call; a mismatch fails with `CHAIN_MISMATCH`.                                                        |
+| `ELYSIUM_CHAIN_NAME`       | `Elysium`    | Display name only.                                                                                                                                                                  |
+| `RPC_TIMEOUT_MS`           | `10000`      | Timeout per RPC attempt.                                                                                                                                                            |
+| `RPC_RETRY_COUNT`          | `3`          | Retries after the first attempt, for timeouts, connection errors, HTTP 408/429/5xx and JSON-RPC rate-limit errors only.                                                             |
+| `RPC_RETRY_BASE_DELAY_MS`  | `250`        | Base for exponential backoff with full jitter (capped at 10 s). A `Retry-After` header takes precedence.                                                                            |
+| `RPC_RATE_LIMIT_RPS`       | `10`         | Client-side limit on RPC requests per second (token bucket; retries count too).                                                                                                     |
+| `MAX_LOG_BLOCK_RANGE`      | `2000`       | Maximum blocks per unfiltered `get_logs` query (about 3–7 minutes at 100–200 ms blocks). Queries with an address or topic filter have no block limit.                               |
+| `BLOCK_TIME_SAMPLE_SIZE`   | `1000`       | Blocks `get_chain_status` measures block time over.                                                                                                                                 |
+| `MCP_TRANSPORT`            | `stdio`      | `stdio` or `http`.                                                                                                                                                                  |
+| `MCP_HTTP_HOST`            | `127.0.0.1`  | HTTP bind address.                                                                                                                                                                  |
+| `MCP_HTTP_PORT`            | `3000`       | HTTP port.                                                                                                                                                                          |
+| `MCP_HTTP_TOKEN`           | unset        | Bearer token for HTTP, at least 16 characters. **Required** if the host is not loopback, and whenever `ENABLE_WRITES=true` over HTTP.                                               |
+| `LOG_LEVEL`                | `info`       | `debug`, `info`, `warn` or `error`. Logs go to stderr only.                                                                                                                         |
+| `ENABLE_WRITES`            | `false`      | Turns on the [write tools](#write-tools-optional-testnet-only). Requires `ELYSIUM_PRIVATE_KEY` and `ELYSIUM_CHAIN_ID=99801`. When unset, the write tools are not registered at all. |
+| `ELYSIUM_PRIVATE_KEY`      | unset        | Private key of the account the write tools send from (64 hex characters). Read only when `ENABLE_WRITES=true`; never logged or returned.                                            |
+| `MAX_SEND_HYPE`            | `0.01`       | Most HYPE a single write may send (`value`). Larger values are refused with `VALUE_CAP_EXCEEDED`.                                                                                   |
+| `MAX_FEE_HYPE`             | `0.001`      | Most a single write may cost in fees (gas limit × max fee per gas). Above it, the write is refused with `FEE_CAP_EXCEEDED`.                                                         |
+| `WRITE_ALLOWLIST`          | unset        | Comma-separated addresses. When set, writes to any other address are refused with `ADDRESS_NOT_ALLOWED`.                                                                            |
+| `WRITE_RECEIPT_TIMEOUT_MS` | `30000`      | How long a write waits for its receipt before returning `status: "pending"`.                                                                                                        |
+| `EXPLORER_API_URL`         | unset        | Enables the optional [explorer tools](#explorer-tools-optional-undocumented-api). No default. For the testnet explorer: `https://elysium.kinetiq.xyz/api/v2`.                       |
+| `EXPLORER_TIMEOUT_MS`      | `10000`      | Timeout per explorer request.                                                                                                                                                       |
+| `EXPLORER_RETRY_COUNT`     | `2`          | Retries for explorer timeouts, connection errors, HTTP 408/429/5xx. A `Retry-After` header is honoured.                                                                             |
+| `EXPLORER_RATE_LIMIT_RPS`  | `5`          | Client-side limit on explorer requests per second.                                                                                                                                  |
 
 ### HTTP transport security
 
@@ -127,7 +133,8 @@ claude mcp add --transport http elysium http://127.0.0.1:3000/mcp \
 
 ## Tools
 
-All tools are read-only. Inputs are JSON. Integers in outputs are **decimal strings**, because blockchain
+All tools below are read-only; the [write tools](#write-tools-optional-testnet-only) are separate and off by
+default. Inputs are JSON. Integers in outputs are **decimal strings**, because blockchain
 integers often exceed JavaScript's safe range. Addresses are returned EIP-55 checksummed.
 
 Wherever an input takes a `block`, it accepts an integer block number or a tag: `latest` (default), `safe`,
@@ -457,6 +464,124 @@ Plus pagination fields and `notices`.
 - `holders`: `{ items[{ holder, balance, tokenId }], nextCursor, truncated, omittedItems }`, or `null`
 - `notices`
 
+## Write tools (optional, testnet only)
+
+> **These tools send real transactions from an account you fund.** Read [Risks](#risks-of-the-write-tools)
+> before enabling them. New to keys, nonces and gas? See [docs/CONCEPTS.md](docs/CONCEPTS.md#private-keys).
+
+They are registered only when `ENABLE_WRITES=true`. The server then refuses to start unless:
+
+- `ELYSIUM_PRIVATE_KEY` holds a valid key;
+- `ELYSIUM_CHAIN_ID` is `99801` (Elysium testnet). This is hard-coded, and every write also checks that
+  the node reports `99801` before doing anything;
+- over HTTP, `MCP_HTTP_TOKEN` is set.
+
+At startup the server logs a warning with the sending address, the caps and the allowlist, plus a second
+warning if the explorer tools are also enabled.
+
+Every write goes through the same steps:
+
+1. **Allowlist** (if `WRITE_ALLOWLIST` is set) and **value cap** (`MAX_SEND_HYPE`).
+2. **Chain check**: the node must report chain ID `99801`.
+3. **Simulation** with `eth_call` from the sending account. If it reverts, nothing is sent and the tool
+   returns `EXECUTION_REVERTED` with the decoded reason.
+4. **Gas and fee**: gas limit = `eth_estimateGas` + 20%; refused with `FEE_CAP_EXCEEDED` if
+   gas limit × max fee per gas exceeds `MAX_FEE_HYPE`.
+5. **Balance**: refused with `INSUFFICIENT_FUNDS` if the account can't cover value + maximum fee.
+6. With `dry_run` true (the default), the tool stops here and returns exactly what it would send.
+   With `dry_run: false`, it signs (EIP-1559, chain ID `99801`), sends, and waits up to
+   `WRITE_RECEIPT_TIMEOUT_MS` for the receipt.
+
+Sends are handled one at a time, so concurrent calls get distinct nonces. Each attempt, including refused
+ones and dry runs, writes one `write-audit` line to the log (at `warn` level, so it shows at every
+`LOG_LEVEL` except `error`):
+
+```
+… WARN write-audit {"tool":"send_native","from":"0x…","to":"0x…","value":"1000","function":null,"dryRun":false,"outcome":"success","hash":"0x…"}
+```
+
+`outcome` is `dry_run`, `success`, `reverted`, `pending`, or `error:<CODE>`. The line never contains the key.
+
+### `send_native`
+
+Sends HYPE from the server's account.
+
+| Input     | Type              | Description                                  |
+| --------- | ----------------- | -------------------------------------------- |
+| `to`      | string            | Recipient.                                   |
+| `value`   | string or integer | HYPE to send, **in wei**.                    |
+| `dry_run` | boolean, optional | Default `true`: preview only. `false` sends. |
+
+### `write_contract`
+
+Calls a state-changing contract function from the server's account. **The caller supplies the ABI**; the
+write tools never fetch one from the explorer.
+
+| Input                         | Type                        | Description                                                             |
+| ----------------------------- | --------------------------- | ----------------------------------------------------------------------- |
+| `to`                          | string                      | Contract.                                                               |
+| `abi`, `functionName`, `args` | required (`args` optional)  | The function to call. `view` and `pure` functions are refused.          |
+| `value`                       | string or integer, optional | HYPE to send, in wei. Only `payable` functions accept a non-zero value. |
+| `dry_run`                     | boolean, optional           | Default `true`: preview only. `false` sends.                            |
+
+**Output** (both tools)
+
+- `dryRun`, `status`: `dry_run`, `success`, `reverted` (mined but failed on-chain; the fee was still paid),
+  or `pending` (sent, no receipt yet: **do not resend**, check `get_transaction` with the hash)
+- `hash`: `null` for a dry run
+- `transaction`: `{ chainId, from, to, value, data, nonce, gasLimit, maxFeePerGas, maxPriorityFeePerGas, maxFee }`
+- `simulation`: `{ returnData, gasEstimate }`
+- `receipt`: `{ blockNumber, gasUsed, effectiveGasPrice, fee }`, or `null`
+- `call` (`write_contract` only): `{ functionName, signature, args[{ name, type, value }] }`, decoded back from
+  the exact call data, so the caller sees what the transaction really does
+- `note`
+
+**Once a transaction is signed, no error is retryable.** A failed request does not prove the node didn't
+receive the transaction, and a retry would sign a new one with a fresh nonce: a double send. So when
+`eth_sendRawTransaction` fails, the tool:
+
+1. treats "already known" as sent (the node holds this exact transaction, e.g. after a transport-level
+   retry);
+2. otherwise looks the transaction up by its hash, which is known before sending. If the node has it, the
+   tool carries on as if the send succeeded and returns `success`, `reverted` or `pending`. It looks
+   after every failure, not only timeouts: a timed-out attempt may have been mined, and the transport's
+   retry then gets "nonce too low". A just-accepted transaction may not be visible at once, so it tries
+   4 times, 500 ms apart (about 1.5 s);
+3. if the node doesn't have it and the failure was a definite rejection (insufficient funds, nonce,
+   underpriced, other node errors), returns that code;
+4. otherwise (timeout, connection failure, rate limit, or the lookup itself failed) returns
+   `SEND_STATUS_UNKNOWN`.
+
+Every such error has `retryable: false` and the hash in `details.hash`. Check `get_transaction` with it
+before trying again.
+
+### Risks of the write tools
+
+- **The private key sits in an environment variable.** Anyone who can read the server's environment,
+  process list, shell history or `.env` file can take the account. The server removes it from its own
+  environment after startup, but the original source (your MCP client config, a `.env` file) still holds it.
+  Use a dedicated testnet account holding only what you can afford to lose.
+- **`dry_run` is a safeguard against accidents, not a human approval step.** The caller (the agent) can
+  set `dry_run: false` itself. Keep **tool-call approval on in your MCP client** for `send_native` and
+  `write_contract`, so a person confirms each send.
+- **The allowlist and value cap only see the top-level transaction.** `WRITE_ALLOWLIST` checks the address
+  called and `MAX_SEND_HYPE` checks the HYPE sent. Neither looks inside the call data. An allowed ERC-20
+  contract can still be called with `transfer(anyone, everything)` or `approve(anyone, unlimited)`, and
+  both checks pass. **This gap must be closed (by decoding and checking call data) before writes are ever
+  enabled on any chain with real value.**
+- **A passing simulation does not guarantee success.** Chain state can change between the simulation and
+  the send (balances, prices, another transaction landing first). The transaction can then revert on-chain;
+  the tool reports `status: "reverted"`, and the fee is still paid.
+- **Prompt injection.** On-chain data and explorer text (token names, contract source, decoded inputs) are
+  written by third parties. If the explorer tools are enabled alongside writes, such text could try to
+  steer the agent into a write. The server logs a warning when both are on. Tool-call approval is the
+  defence.
+- **Pending is not failed, and unknown is not failed.** `status: "pending"` means the transaction was
+  sent; `SEND_STATUS_UNKNOWN` means it may have been. Resending in either case could send twice, so check
+  `get_transaction` with the hash first. The tools never mark an error after signing as retryable.
+- **One server per key.** Sends are serialised within one process. Two processes sharing a key can pick
+  the same nonce; one gets `NONCE_ERROR`.
+
 ## Errors
 
 Failed tool calls return `isError: true` with a JSON body:
@@ -465,25 +590,32 @@ Failed tool calls return `isError: true` with a JSON body:
 { "error": { "code": "RANGE_TOO_LARGE", "message": "…", "retryable": false, "hint": "…", "details": {} } }
 ```
 
-| Code                        | Meaning                                                                              | What the agent should do                                      |
-| --------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
-| `INVALID_INPUT`             | Malformed input (hash, block, number, argument types, conflicting options).          | Fix the input.                                                |
-| `INVALID_ADDRESS`           | Not a 20-byte hex address, or a bad EIP-55 checksum.                                 | Fix the address, or pass it in lowercase.                     |
-| `INVALID_ABI`               | The ABI couldn't be parsed.                                                          | Fix the ABI.                                                  |
-| `ABI_MISMATCH`              | Function or event not in the ABI, or the contract returned data that doesn't fit it. | Use the contract's real ABI.                                  |
-| `NOT_A_CONTRACT`            | No code at the address.                                                              | Check the address and network.                                |
-| `NOT_FOUND`                 | Block or transaction not found, or the explorer has no record (HTTP 404).            | Check the identifier; it may not exist on this network.       |
-| `RANGE_TOO_LARGE`           | Log query too wide (local cap or node limit).                                        | Split the range or narrow the filter.                         |
-| `EXECUTION_REVERTED`        | A `read_contract` call reverted.                                                     | Check the arguments; see `details.reason`.                    |
-| `RPC_TIMEOUT`               | Node didn't answer in time, after retries.                                           | Retry later (`retryable: true`).                              |
-| `RATE_LIMITED`              | Node or explorer rate limited us, after retries (`details.source` says which).       | Wait, then retry (`retryable: true`).                         |
-| `RPC_UNAVAILABLE`           | Connection failure or HTTP 5xx, after retries.                                       | Retry later (`retryable: true`).                              |
-| `RPC_ERROR`                 | Any other node error.                                                                | See `message`.                                                |
-| `CHAIN_MISMATCH`            | The RPC serves a different chain ID from `ELYSIUM_CHAIN_ID`.                         | Operator must fix the config.                                 |
-| `EXPLORER_UNAVAILABLE`      | Explorer timed out, unreachable, or HTTP 5xx, after retries.                         | Retry later (`retryable: true`); use the RPC tools meanwhile. |
-| `EXPLORER_RESPONSE_INVALID` | Explorer response wasn't JSON or no longer has the expected shape.                   | The undocumented API probably changed; use the RPC tools.     |
-| `EXPLORER_ERROR`            | Explorer rejected the request (HTTP 4xx other than 404/429).                         | See `details.status`.                                         |
-| `INTERNAL_ERROR`            | Bug in this server.                                                                  | Report it.                                                    |
+| Code                        | Meaning                                                                               | What the agent should do                                      |
+| --------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `INVALID_INPUT`             | Malformed input (hash, block, number, argument types, conflicting options).           | Fix the input.                                                |
+| `INVALID_ADDRESS`           | Not a 20-byte hex address, or a bad EIP-55 checksum.                                  | Fix the address, or pass it in lowercase.                     |
+| `INVALID_ABI`               | The ABI couldn't be parsed.                                                           | Fix the ABI.                                                  |
+| `ABI_MISMATCH`              | Function or event not in the ABI, or the contract returned data that doesn't fit it.  | Use the contract's real ABI.                                  |
+| `NOT_A_CONTRACT`            | No code at the address.                                                               | Check the address and network.                                |
+| `NOT_FOUND`                 | Block or transaction not found, or the explorer has no record (HTTP 404).             | Check the identifier; it may not exist on this network.       |
+| `RANGE_TOO_LARGE`           | Log query too wide (local cap or node limit).                                         | Split the range or narrow the filter.                         |
+| `EXECUTION_REVERTED`        | A `read_contract` call, or a write's simulation, reverted. A write sends nothing.     | Check the arguments; see `details.reason` / `details.revert`. |
+| `RPC_TIMEOUT`               | Node didn't answer in time, after retries.                                            | Retry later (`retryable: true`).                              |
+| `RATE_LIMITED`              | Node or explorer rate limited us, after retries (`details.source` says which).        | Wait, then retry (`retryable: true`).                         |
+| `RPC_UNAVAILABLE`           | Connection failure or HTTP 5xx, after retries.                                        | Retry later (`retryable: true`).                              |
+| `RPC_ERROR`                 | Any other node error.                                                                 | See `message`.                                                |
+| `CHAIN_MISMATCH`            | The RPC serves a different chain ID from `ELYSIUM_CHAIN_ID`.                          | Operator must fix the config.                                 |
+| `EXPLORER_UNAVAILABLE`      | Explorer timed out, unreachable, or HTTP 5xx, after retries.                          | Retry later (`retryable: true`); use the RPC tools meanwhile. |
+| `EXPLORER_RESPONSE_INVALID` | Explorer response wasn't JSON or no longer has the expected shape.                    | The undocumented API probably changed; use the RPC tools.     |
+| `EXPLORER_ERROR`            | Explorer rejected the request (HTTP 4xx other than 404/429).                          | See `details.status`.                                         |
+| `WRITES_DISABLED`           | A write ran while writes are off (normally the tools are not registered at all).      | Operator must set `ENABLE_WRITES` and `ELYSIUM_PRIVATE_KEY`.  |
+| `INSUFFICIENT_FUNDS`        | The sending account can't cover value + maximum fee.                                  | Fund the account or lower the value.                          |
+| `NONCE_ERROR`               | The node rejected the nonce (too low, too high, underpriced) and doesn't have the tx. | Check pending transactions (`details.hash`) before retrying.  |
+| `VALUE_CAP_EXCEEDED`        | `value` is above `MAX_SEND_HYPE`.                                                     | Send less, or the operator raises the cap.                    |
+| `FEE_CAP_EXCEEDED`          | Gas limit × max fee per gas is above `MAX_FEE_HYPE`.                                  | Simplify the call, or the operator raises the cap.            |
+| `ADDRESS_NOT_ALLOWED`       | The destination is not in `WRITE_ALLOWLIST`.                                          | Use an allowed address, or the operator updates the list.     |
+| `SEND_STATUS_UNKNOWN`       | A signed transaction's send failed and the node may still have received it.           | **Don't retry.** Check `get_transaction` with `details.hash`. |
+| `INTERNAL_ERROR`            | Bug in this server.                                                                   | Report it.                                                    |
 
 Errors from schema validation in the MCP SDK (e.g. a number where a string is required) come back as
 plain-text `Input validation error: …`.
@@ -511,6 +643,13 @@ The unit tests run the real MCP server, viem client and transport against a fake
 viem's real error handling (reverts, timeouts, HTTP failures) is exercised.
 
 The explorer live tests (`tests/integration/explorer.live.test.ts`) run only when `EXPLORER_API_URL` is set.
+
+The live write tests (`tests/integration/write.live.test.ts`) have two parts:
+
+- One always runs. It uses a fresh, unfunded throwaway key, so it can never send anything. It checks the
+  real node accepts the write path up to the balance check, which refuses with `INSUFFICIENT_FUNDS`.
+- One sends 1 wei from an account to itself, and runs only when `ELYSIUM_TEST_PRIVATE_KEY` holds a
+  **funded testnet** key: `ELYSIUM_TEST_PRIVATE_KEY=0x… npm run test:integration`.
 
 The integration tests read the live testnet. They discover addresses on-chain (a recent transaction, an
 ERC-20 that recently emitted a `Transfer`) rather than hard-coding any. They use `ELYSIUM_RPC_URL` and

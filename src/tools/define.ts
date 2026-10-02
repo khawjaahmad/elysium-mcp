@@ -62,7 +62,15 @@ export async function runTool(def: AnyToolDefinition, args: unknown, ctx: ToolCo
   }
 }
 
-export function registerTools(server: McpServer, tools: readonly AnyToolDefinition[], ctx: ToolContext): void {
+const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true };
+export const WRITE = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true };
+
+export function registerTools(
+  server: McpServer,
+  tools: readonly AnyToolDefinition[],
+  ctx: ToolContext,
+  annotations = READ_ONLY,
+): void {
   for (const def of tools) {
     server.registerTool(
       def.name,
@@ -71,7 +79,7 @@ export function registerTools(server: McpServer, tools: readonly AnyToolDefiniti
         description: def.description,
         inputSchema: def.inputSchema,
         outputSchema: def.outputSchema,
-        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+        annotations,
       },
       (args: unknown) => runTool(def, args, ctx),
     );
