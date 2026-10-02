@@ -15,7 +15,18 @@ import { loadConfig, type Config } from '../../src/config.js';
 import { createLogger } from '../../src/logger.js';
 import { sendNative } from '../../src/tools/sendNative.js';
 import { createHarness, expectError, expectOk, TEST_ENV, testConfig } from './helpers/harness.js';
-import { ALICE, BOB, rpcBlock, rpcReceipt, RpcFailure, TOKEN, type Handler } from './helpers/rpc.js';
+import {
+  ALICE,
+  BOB,
+  HANG,
+  HttpFailure,
+  rpcBlock,
+  rpcReceipt,
+  RpcFailure,
+  rpcTransaction,
+  TOKEN,
+  type Handler,
+} from './helpers/rpc.js';
 
 // Anvil's first well-known test key. Never use it with real funds.
 const KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
@@ -51,6 +62,8 @@ function writeNode(overrides: Record<string, Handler> = {}) {
       return keccak256(raw as Hex);
     },
     eth_getTransactionReceipt: ([hash]) => rpcReceipt({ transactionHash: hash, from: SIGNER, to: BOB }),
+    // Lookup after a failed send: by default the node does not have it.
+    eth_getTransactionByHash: () => null,
     ...overrides,
   };
   return { handlers, sent };
@@ -251,6 +264,107 @@ describe('write tools', () => {
       ]);
       expect(sent.map((raw) => parseTransaction(raw).nonce).sort()).toEqual([7, 8]);
     });
+  });
+
+  describe('after signing', () => {
+    const throwing = (err: RpcFailure) => () => {
+      throw err;
+    };
+    /** Distinct signed transactions the node was asked to send. More than one would be a double send. */
+    const signedTxs = () => [
+      ...new Set(h!.rpc.calls.filter((c) => c.method === 'eth_sendRawTransaction').map((c) => c.params[0] as Hex)),
+    ];
+    const found: Handler = ([hash]) => rpcTransaction({ hash, from: SIGNER, to: BOB });
+
+    it('continues as sent when the send times out but the node has the transaction', async () => {
+      await setup({ eth_sendRawTransaction: () => HANG, eth_getTransactionByHash: found });
+      const data = expectOk(await h!.call('send_native', { to: BOB, value: '1', dry_run: false }));
+      expect(signedTxs()).toHaveLength(1);
+      expect(data).toMatchObject({ status: 'success', hash: keccak256(signedTxs()[0]!) });
+    });
+
+    it('returns a non-retryable SEND_STATUS_UNKNOWN with the hash when the send times out and is not found', async () => {
+      await setup({ eth_sendRawTransaction: () => HANG });
+      const error = expectError(await h!.call('send_native', { to: BOB, value: '1', dry_run: false }));
+      expect(error).toMatchObject({
+        code: 'SEND_STATUS_UNKNOWN',
+        retryable: false,
+        details: { hash: keccak256(signedTxs()[0]!), sendError: { code: 'RPC_TIMEOUT' } },
+      });
+      expect(error.hint).toMatch(/Do not retry yet/);
+      expect(signedTxs()).toHaveLength(1);
+    });
+
+    it('treats "already known" on a transport-level retry as sent', async () => {
+      let n = 0;
+      await setup({
+        eth_sendRawTransaction: () =>
+          ++n === 1 ? new HttpFailure(503) : throwing(new RpcFailure(-32000, 'already known'))(),
+      });
+      const data = expectOk(await h!.call('send_native', { to: BOB, value: '1', dry_run: false }));
+      expect(h!.rpc.count('eth_sendRawTransaction')).toBe(2);
+      expect(signedTxs()).toHaveLength(1);
+      expect(data).toMatchObject({ status: 'success', hash: keccak256(signedTxs()[0]!) });
+    });
+
+    it('treats a retried send that comes back "nonce too low" as sent when the node has it', async () => {
+      let n = 0;
+      await setup({
+        eth_sendRawTransaction: () =>
+          ++n === 1
+            ? new HttpFailure(503)
+            : throwing(new RpcFailure(-32000, 'nonce too low: next nonce 8, tx nonce 7'))(),
+        eth_getTransactionByHash: found,
+      });
+      const data = expectOk(await h!.call('send_native', { to: BOB, value: '1', dry_run: false }));
+      expect(data).toMatchObject({ status: 'success', hash: keccak256(signedTxs()[0]!) });
+    });
+
+    it.each([
+      ['timeout', () => HANG, () => null, 'SEND_STATUS_UNKNOWN'],
+      ['HTTP 503', () => new HttpFailure(503), () => null, 'SEND_STATUS_UNKNOWN'],
+      ['HTTP 429', () => new HttpFailure(429), () => null, 'SEND_STATUS_UNKNOWN'],
+      [
+        'JSON-RPC rate limit',
+        throwing(new RpcFailure(-32005, 'rate limit exceeded')),
+        () => null,
+        'SEND_STATUS_UNKNOWN',
+      ],
+      ['timeout, and the lookup fails too', () => HANG, () => new HttpFailure(503), 'SEND_STATUS_UNKNOWN'],
+      ['nonce too low', throwing(new RpcFailure(-32000, 'nonce too low')), () => null, 'NONCE_ERROR'],
+      [
+        'underpriced',
+        throwing(new RpcFailure(-32000, 'replacement transaction underpriced')),
+        () => null,
+        'NONCE_ERROR',
+      ],
+      [
+        'insufficient funds',
+        throwing(new RpcFailure(-32000, 'insufficient funds for gas')),
+        () => null,
+        'INSUFFICIENT_FUNDS',
+      ],
+      [
+        'other rejection',
+        throwing(new RpcFailure(-32000, 'max fee per gas less than base fee')),
+        () => null,
+        'RPC_ERROR',
+      ],
+      [
+        'nonce too low, lookup fails',
+        throwing(new RpcFailure(-32000, 'nonce too low')),
+        () => new HttpFailure(503),
+        'SEND_STATUS_UNKNOWN',
+      ],
+    ] as [string, Handler, Handler, string][])(
+      'no error after signing is retryable: %s',
+      async (_label, send, lookup, code) => {
+        await setup({ eth_sendRawTransaction: send, eth_getTransactionByHash: lookup });
+        const error = expectError(await h!.call('send_native', { to: BOB, value: '1', dry_run: false }));
+        expect(error).toMatchObject({ code, retryable: false, details: { hash: keccak256(signedTxs()[0]!) } });
+        expect(signedTxs()).toHaveLength(1);
+      },
+    );
   });
 
   describe('write_contract', () => {

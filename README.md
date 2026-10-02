@@ -536,8 +536,23 @@ write tools never fetch one from the explorer.
   the exact call data, so the caller sees what the transaction really does
 - `note`
 
-If sending fails, the error's `details.hash` holds the transaction's hash (it is known before sending), so
-it can be checked with `get_transaction` before any retry.
+**Once a transaction is signed, no error is retryable.** A failed request does not prove the node didn't
+receive the transaction, and a retry would sign a new one with a fresh nonce: a double send. So when
+`eth_sendRawTransaction` fails, the tool:
+
+1. treats "already known" as sent (the node holds this exact transaction, e.g. after a transport-level
+   retry);
+2. otherwise looks the transaction up by its hash, which is known before sending. If the node has it, the
+   tool carries on as if the send succeeded and returns `success`, `reverted` or `pending`. It looks
+   after every failure, not only timeouts: a timed-out attempt may have been mined, and the transport's
+   retry then gets "nonce too low";
+3. if the node doesn't have it and the failure was a definite rejection (insufficient funds, nonce,
+   underpriced, other node errors), returns that code;
+4. otherwise (timeout, connection failure, rate limit, or the lookup itself failed) returns
+   `SEND_STATUS_UNKNOWN`.
+
+Every such error has `retryable: false` and the hash in `details.hash`. Check `get_transaction` with it
+before trying again.
 
 ### Risks of the write tools
 
@@ -560,8 +575,9 @@ it can be checked with `get_transaction` before any retry.
   written by third parties. If the explorer tools are enabled alongside writes, such text could try to
   steer the agent into a write. The server logs a warning when both are on. Tool-call approval is the
   defence.
-- **Pending is not failed.** A `pending` status means the transaction was sent. Resending it could send
-  twice, so check `get_transaction` with the hash first.
+- **Pending is not failed, and unknown is not failed.** `status: "pending"` means the transaction was
+  sent; `SEND_STATUS_UNKNOWN` means it may have been. Resending in either case could send twice, so check
+  `get_transaction` with the hash first. The tools never mark an error after signing as retryable.
 - **One server per key.** Sends are serialised within one process. Two processes sharing a key can pick
   the same nonce; one gets `NONCE_ERROR`.
 
@@ -573,31 +589,32 @@ Failed tool calls return `isError: true` with a JSON body:
 { "error": { "code": "RANGE_TOO_LARGE", "message": "…", "retryable": false, "hint": "…", "details": {} } }
 ```
 
-| Code                        | Meaning                                                                              | What the agent should do                                      |
-| --------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
-| `INVALID_INPUT`             | Malformed input (hash, block, number, argument types, conflicting options).          | Fix the input.                                                |
-| `INVALID_ADDRESS`           | Not a 20-byte hex address, or a bad EIP-55 checksum.                                 | Fix the address, or pass it in lowercase.                     |
-| `INVALID_ABI`               | The ABI couldn't be parsed.                                                          | Fix the ABI.                                                  |
-| `ABI_MISMATCH`              | Function or event not in the ABI, or the contract returned data that doesn't fit it. | Use the contract's real ABI.                                  |
-| `NOT_A_CONTRACT`            | No code at the address.                                                              | Check the address and network.                                |
-| `NOT_FOUND`                 | Block or transaction not found, or the explorer has no record (HTTP 404).            | Check the identifier; it may not exist on this network.       |
-| `RANGE_TOO_LARGE`           | Log query too wide (local cap or node limit).                                        | Split the range or narrow the filter.                         |
-| `EXECUTION_REVERTED`        | A `read_contract` call, or a write's simulation, reverted. A write sends nothing.    | Check the arguments; see `details.reason` / `details.revert`. |
-| `RPC_TIMEOUT`               | Node didn't answer in time, after retries.                                           | Retry later (`retryable: true`).                              |
-| `RATE_LIMITED`              | Node or explorer rate limited us, after retries (`details.source` says which).       | Wait, then retry (`retryable: true`).                         |
-| `RPC_UNAVAILABLE`           | Connection failure or HTTP 5xx, after retries.                                       | Retry later (`retryable: true`).                              |
-| `RPC_ERROR`                 | Any other node error.                                                                | See `message`.                                                |
-| `CHAIN_MISMATCH`            | The RPC serves a different chain ID from `ELYSIUM_CHAIN_ID`.                         | Operator must fix the config.                                 |
-| `EXPLORER_UNAVAILABLE`      | Explorer timed out, unreachable, or HTTP 5xx, after retries.                         | Retry later (`retryable: true`); use the RPC tools meanwhile. |
-| `EXPLORER_RESPONSE_INVALID` | Explorer response wasn't JSON or no longer has the expected shape.                   | The undocumented API probably changed; use the RPC tools.     |
-| `EXPLORER_ERROR`            | Explorer rejected the request (HTTP 4xx other than 404/429).                         | See `details.status`.                                         |
-| `WRITES_DISABLED`           | A write ran while writes are off (normally the tools are not registered at all).     | Operator must set `ENABLE_WRITES` and `ELYSIUM_PRIVATE_KEY`.  |
-| `INSUFFICIENT_FUNDS`        | The sending account can't cover value + maximum fee.                                 | Fund the account or lower the value.                          |
-| `NONCE_ERROR`               | The node rejected the nonce (too low, too high, already known, underpriced).         | Check pending transactions (`details.hash`) before retrying.  |
-| `VALUE_CAP_EXCEEDED`        | `value` is above `MAX_SEND_HYPE`.                                                    | Send less, or the operator raises the cap.                    |
-| `FEE_CAP_EXCEEDED`          | Gas limit × max fee per gas is above `MAX_FEE_HYPE`.                                 | Simplify the call, or the operator raises the cap.            |
-| `ADDRESS_NOT_ALLOWED`       | The destination is not in `WRITE_ALLOWLIST`.                                         | Use an allowed address, or the operator updates the list.     |
-| `INTERNAL_ERROR`            | Bug in this server.                                                                  | Report it.                                                    |
+| Code                        | Meaning                                                                               | What the agent should do                                      |
+| --------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `INVALID_INPUT`             | Malformed input (hash, block, number, argument types, conflicting options).           | Fix the input.                                                |
+| `INVALID_ADDRESS`           | Not a 20-byte hex address, or a bad EIP-55 checksum.                                  | Fix the address, or pass it in lowercase.                     |
+| `INVALID_ABI`               | The ABI couldn't be parsed.                                                           | Fix the ABI.                                                  |
+| `ABI_MISMATCH`              | Function or event not in the ABI, or the contract returned data that doesn't fit it.  | Use the contract's real ABI.                                  |
+| `NOT_A_CONTRACT`            | No code at the address.                                                               | Check the address and network.                                |
+| `NOT_FOUND`                 | Block or transaction not found, or the explorer has no record (HTTP 404).             | Check the identifier; it may not exist on this network.       |
+| `RANGE_TOO_LARGE`           | Log query too wide (local cap or node limit).                                         | Split the range or narrow the filter.                         |
+| `EXECUTION_REVERTED`        | A `read_contract` call, or a write's simulation, reverted. A write sends nothing.     | Check the arguments; see `details.reason` / `details.revert`. |
+| `RPC_TIMEOUT`               | Node didn't answer in time, after retries.                                            | Retry later (`retryable: true`).                              |
+| `RATE_LIMITED`              | Node or explorer rate limited us, after retries (`details.source` says which).        | Wait, then retry (`retryable: true`).                         |
+| `RPC_UNAVAILABLE`           | Connection failure or HTTP 5xx, after retries.                                        | Retry later (`retryable: true`).                              |
+| `RPC_ERROR`                 | Any other node error.                                                                 | See `message`.                                                |
+| `CHAIN_MISMATCH`            | The RPC serves a different chain ID from `ELYSIUM_CHAIN_ID`.                          | Operator must fix the config.                                 |
+| `EXPLORER_UNAVAILABLE`      | Explorer timed out, unreachable, or HTTP 5xx, after retries.                          | Retry later (`retryable: true`); use the RPC tools meanwhile. |
+| `EXPLORER_RESPONSE_INVALID` | Explorer response wasn't JSON or no longer has the expected shape.                    | The undocumented API probably changed; use the RPC tools.     |
+| `EXPLORER_ERROR`            | Explorer rejected the request (HTTP 4xx other than 404/429).                          | See `details.status`.                                         |
+| `WRITES_DISABLED`           | A write ran while writes are off (normally the tools are not registered at all).      | Operator must set `ENABLE_WRITES` and `ELYSIUM_PRIVATE_KEY`.  |
+| `INSUFFICIENT_FUNDS`        | The sending account can't cover value + maximum fee.                                  | Fund the account or lower the value.                          |
+| `NONCE_ERROR`               | The node rejected the nonce (too low, too high, underpriced) and doesn't have the tx. | Check pending transactions (`details.hash`) before retrying.  |
+| `VALUE_CAP_EXCEEDED`        | `value` is above `MAX_SEND_HYPE`.                                                     | Send less, or the operator raises the cap.                    |
+| `FEE_CAP_EXCEEDED`          | Gas limit × max fee per gas is above `MAX_FEE_HYPE`.                                  | Simplify the call, or the operator raises the cap.            |
+| `ADDRESS_NOT_ALLOWED`       | The destination is not in `WRITE_ALLOWLIST`.                                          | Use an allowed address, or the operator updates the list.     |
+| `SEND_STATUS_UNKNOWN`       | A signed transaction's send failed and the node may still have received it.           | **Don't retry.** Check `get_transaction` with `details.hash`. |
+| `INTERNAL_ERROR`            | Bug in this server.                                                                   | Report it.                                                    |
 
 Errors from schema validation in the MCP SDK (e.g. a number where a string is required) come back as
 plain-text `Input validation error: …`.

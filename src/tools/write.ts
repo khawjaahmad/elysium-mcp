@@ -97,7 +97,7 @@ export function classifyWriteError(err: unknown): ToolError {
       cause: err,
     });
   }
-  if (/nonce too (low|high)|invalid nonce|replacement transaction underpriced|already known/i.test(message)) {
+  if (/nonce too (low|high)|invalid nonce|replacement transaction underpriced/i.test(message)) {
     return new ToolError('NONCE_ERROR', `The node rejected the transaction nonce: ${message}`, {
       hint: 'Another transaction from this account may be pending. Check recent transactions before trying again.',
       cause: err,
@@ -132,6 +132,53 @@ function oneAtATime<T>(fn: () => Promise<T>): Promise<T> {
   const run = sendQueue.then(fn, fn);
   sendQueue = run.catch(() => undefined);
   return run;
+}
+
+/**
+ * Sends a signed transaction and returns its hash. From here on no error is
+ * retryable: the node may have accepted the transaction even if the request
+ * failed, and a retry would sign a second transaction with a fresh nonce.
+ */
+async function sendSigned(ctx: ToolContext, serialized: Hex): Promise<Hash> {
+  // The hash is known before sending, so a failed send can still be looked up.
+  const hash = keccak256(serialized);
+  let sendError: unknown;
+  try {
+    return (await ctx.client.request({ method: 'eth_sendRawTransaction', params: [serialized] })) as Hash;
+  } catch (err) {
+    // The node already holds this exact transaction, e.g. after a transport-level retry.
+    if (/already known/i.test(rpcMessage(err))) return hash;
+    sendError = err;
+  }
+
+  // Look it up after any failure, not only uncertain ones: if a timed-out first
+  // attempt was accepted and mined, the transport's retry gets "nonce too low".
+  let lookupFailed = false;
+  try {
+    await ctx.client.getTransaction({ hash });
+    return hash;
+  } catch (err) {
+    lookupFailed = toToolError(err).code !== 'NOT_FOUND';
+  }
+
+  const e = classifyWriteError(sendError);
+  if (!e.retryable && !lookupFailed) {
+    // A definite rejection, and the node does not have the transaction.
+    throw new ToolError(e.code, e.message, {
+      ...(e.hint === undefined ? {} : { hint: e.hint }),
+      details: { ...e.details, hash },
+      cause: sendError,
+    });
+  }
+  throw new ToolError(
+    'SEND_STATUS_UNKNOWN',
+    `Sending failed (${e.message}), and it is unknown whether the node received the transaction.`,
+    {
+      hint: `Do not retry yet: a retry signs a new transaction and could send twice. Check get_transaction for ${hash} first.`,
+      details: { hash, sendError: { code: e.code, message: e.message } },
+      cause: sendError,
+    },
+  );
 }
 
 /** Polls for the receipt until it appears or the timeout passes. Errors while polling are not fatal: the transaction is already sent. */
@@ -273,19 +320,7 @@ export async function executeWrite(req: WriteRequest, ctx: ToolContext): Promise
     }
 
     const serialized = await account.signTransaction(tx);
-    // The hash is known before sending, so a failed or timed-out send can still be traced.
-    const expectedHash = keccak256(serialized);
-    let hash: Hash;
-    try {
-      hash = (await client.request({ method: 'eth_sendRawTransaction', params: [serialized] })) as Hash;
-    } catch (err) {
-      const e = classifyWriteError(err);
-      throw new ToolError(e.code, e.message, {
-        hint: `The node may still have received it. Check get_transaction for ${expectedHash} before trying again.`,
-        details: { ...e.details, hash: expectedHash },
-        cause: err,
-      });
-    }
+    const hash = await sendSigned(ctx, serialized);
 
     const receipt = await waitForReceipt(ctx, hash);
     if (!receipt) {
