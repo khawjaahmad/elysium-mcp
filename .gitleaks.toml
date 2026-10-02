@@ -1,0 +1,22 @@
+# gitleaks configuration: the default rules, plus known non-secrets in the test fixtures.
+# Scan the full history with:
+#   docker run --rm -v "$PWD":/repo zricethezav/gitleaks:latest git /repo --log-opts=--all
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Published test fixtures, not secrets"
+regexTarget = "secret"
+regexes = [
+  # Anvil / Hardhat default dev account #0 (0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266). Its private key is
+  # published in Foundry's and Hardhat's documentation, so anyone can use it; never fund it on a real chain.
+  # Used by tests/unit/config.test.ts and tests/unit/writes.test.ts.
+  '''^0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80$''',
+  # Anvil / Hardhat default dev account #1 (0x70997970C51812dc3A010C7d01b50e0d17dc79C8). Published the same
+  # way. Used by tests/unit/writes.test.ts.
+  '''^0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d$''',
+  # Not a key: an ERC-20 contract address in tests/unit/explorerFixtures.ts (TOKEN), flagged only because
+  # of the variable name.
+  '''^0x7ae29BE60A29425dABC75e361875F1dd21c160A7$''',
+]

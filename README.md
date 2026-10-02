@@ -1,5 +1,10 @@
 # elysium-chain-mcp
 
+> [!IMPORTANT]
+> **Testnet only. Unofficial. Not affiliated with Kinetiq.** This is an independent open-source project, not
+> made, endorsed or supported by Kinetiq. It is built and tested against the Elysium **testnet** only; mainnet
+> has not been published. The optional write tools refuse any chain other than the testnet (chain ID `99801`).
+
 An open-source [Model Context Protocol](https://modelcontextprotocol.io) server that lets AI agents read
 and interact with **Elysium**, Kinetiq's Layer 2 for Hyperliquid.
 
@@ -11,52 +16,22 @@ enables them.
 
 > New to blockchains? [docs/CONCEPTS.md](docs/CONCEPTS.md) explains every concept this server relies on.
 
-This is an independent project, not affiliated with or endorsed by Kinetiq.
+## Quickstart (five minutes)
 
-## Requirements
+You need **Node.js 20 or newer** (`node --version`) and Claude Code or Claude Desktop. Nothing else: the
+server runs through `npx`, and the RPC tools are read-only.
 
-- Node.js 20 or newer
-- An Elysium JSON-RPC endpoint. The public testnet, from the
-  [official docs](https://elysium.kinetiq.xyz/docs/chain-specifications):
+**1. Add the server.**
 
-  |          | Testnet                                   | Mainnet           |
-  | -------- | ----------------------------------------- | ----------------- |
-  | Chain ID | `99801`                                   | not yet published |
-  | RPC      | `https://testnet-rpc.elysium.kinetiq.xyz` | not yet published |
-
-  There are no built-in defaults: the network always comes from environment variables, so mainnet can
-  be used later without code changes.
-
-## Quick start
-
-From source:
+Claude Code:
 
 ```bash
-git clone https://github.com/khawjaahmad/elysium-mcp.git
-cd elysium-mcp
-npm ci
-npm run build
-cp .env.example .env   # edit if needed
-
-# stdio (what Claude Desktop / Claude Code use)
-ELYSIUM_RPC_URL=https://testnet-rpc.elysium.kinetiq.xyz ELYSIUM_CHAIN_ID=99801 node dist/index.js
-
-# or streamable HTTP on http://127.0.0.1:3000/mcp
-MCP_TRANSPORT=http ELYSIUM_RPC_URL=https://testnet-rpc.elysium.kinetiq.xyz ELYSIUM_CHAIN_ID=99801 node dist/index.js
+claude mcp add --env ELYSIUM_RPC_URL=https://testnet-rpc.elysium.kinetiq.xyz \
+  --env ELYSIUM_CHAIN_ID=99801 --transport stdio elysium \
+  -- npx -y elysium-chain-mcp
 ```
 
-The server doesn't read `.env` itself. Pass variables through your MCP client's config (below), your shell, or
-`node --env-file=.env dist/index.js`.
-
-Once published to npm, `npx -y elysium-chain-mcp` runs it without cloning.
-
-## Connecting from Claude
-
-### Claude Desktop
-
-Edit `claude_desktop_config.json` (Settings → Developer → Edit Config). It lives at
-`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS and
-`%APPDATA%\Claude\claude_desktop_config.json` on Windows.
+Claude Desktop: open Settings → Developer → Edit Config, and add this to `claude_desktop_config.json`:
 
 ```json
 {
@@ -73,17 +48,65 @@ Edit `claude_desktop_config.json` (Settings → Developer → Edit Config). It l
 }
 ```
 
+**2. Restart** Claude Desktop, or start a new Claude Code session. In Claude Code, `/mcp` should list
+`elysium` as connected.
+
+**3. Ask it something**, for example:
+
+- "What's the latest block on Elysium, and how fast are blocks?"
+- "Show me the most recent transaction in that block and what it cost in HYPE."
+- "What's the HYPE balance of 0x…?"
+
+To also enable the explorer tools, add `EXPLORER_API_URL=https://elysium.kinetiq.xyz/api/v2` to the
+environment ([read about them first](#explorer-tools-optional-undocumented-api)). The write tools stay off
+unless you follow [their own setup](#write-tools-optional-testnet-only).
+
+## Requirements
+
+- Node.js 20 or newer
+- An Elysium JSON-RPC endpoint. The public testnet, from the
+  [official docs](https://elysium.kinetiq.xyz/docs/chain-specifications):
+
+  |          | Testnet                                   | Mainnet           |
+  | -------- | ----------------------------------------- | ----------------- |
+  | Chain ID | `99801`                                   | not yet published |
+  | RPC      | `https://testnet-rpc.elysium.kinetiq.xyz` | not yet published |
+
+  There are no built-in defaults: the network always comes from environment variables.
+
+## Running from source
+
+```bash
+git clone https://github.com/khawjaahmad/elysium-mcp.git
+cd elysium-mcp
+npm ci
+npm run build
+cp .env.example .env   # edit if needed
+
+# stdio (what Claude Desktop / Claude Code use)
+ELYSIUM_RPC_URL=https://testnet-rpc.elysium.kinetiq.xyz ELYSIUM_CHAIN_ID=99801 node dist/index.js
+
+# or streamable HTTP on http://127.0.0.1:3000/mcp
+MCP_TRANSPORT=http ELYSIUM_RPC_URL=https://testnet-rpc.elysium.kinetiq.xyz ELYSIUM_CHAIN_ID=99801 node dist/index.js
+```
+
+The server doesn't read `.env` itself. Pass variables through your MCP client's config, your shell, or
+`node --env-file=.env dist/index.js`.
+
+## Connecting from Claude
+
+The [Quickstart](#quickstart-five-minutes) has the basic Claude Code and Claude Desktop setup. More detail:
+
+### Claude Desktop
+
+`claude_desktop_config.json` lives at `~/Library/Application Support/Claude/claude_desktop_config.json` on
+macOS and `%APPDATA%\Claude\claude_desktop_config.json` on Windows.
+
 Running from a local checkout instead of npm: use `"command": "node"` and
 `"args": ["/absolute/path/to/elysium-mcp/dist/index.js"]`. Restart Claude Desktop afterwards. Server logs
 go to `~/Library/Logs/Claude/mcp-server-elysium.log` on macOS and `%APPDATA%\Claude\logs` on Windows.
 
 ### Claude Code
-
-```bash
-claude mcp add --env ELYSIUM_RPC_URL=https://testnet-rpc.elysium.kinetiq.xyz \
-  --env ELYSIUM_CHAIN_ID=99801 --transport stdio elysium \
-  -- npx -y elysium-chain-mcp
-```
 
 Over HTTP, with the server started separately with `MCP_TRANSPORT=http` and `MCP_HTTP_TOKEN` set:
 
@@ -654,6 +677,31 @@ The live write tests (`tests/integration/write.live.test.ts`) have two parts:
 The integration tests read the live testnet. They discover addresses on-chain (a recent transaction, an
 ERC-20 that recently emitted a `Transfer`) rather than hard-coding any. They use `ELYSIUM_RPC_URL` and
 `ELYSIUM_CHAIN_ID` if set, otherwise the published testnet values.
+
+To scan the full git history for secrets, run
+`docker run --rm -v "$PWD":/repo zricethezav/gitleaks:latest git /repo --log-opts=--all`. It reads
+[`.gitleaks.toml`](.gitleaks.toml), which allowlists the published test keys used by the unit tests.
+
+## Releasing
+
+[`.github/workflows/publish.yml`](.github/workflows/publish.yml) publishes to npm when a `v*` tag is pushed.
+It refuses a tag that doesn't point at a commit on `main`, or that doesn't match the `package.json`
+version. It then runs the format check, typecheck and unit tests, builds, and publishes with provenance.
+
+First release, in this order:
+
+- [ ] Make the repository public (Settings → General → Danger Zone → Change visibility). npm provenance
+      only works from a public repository, so this comes before the tag.
+- [ ] Enable private vulnerability reporting (Settings → Security → Advisories → Private vulnerability
+      reporting → Enable). [SECURITY.md](SECURITY.md) relies on it.
+- [ ] Add the `NPM_TOKEN` repository secret (Settings → Secrets and variables → Actions → New repository
+      secret). Use a granular npm access token with read and write access to packages.
+- [ ] Push the tag from an up-to-date `main`:
+      `git checkout main && git pull && git tag v0.1.0 && git push origin v0.1.0`. Then watch the
+      Publish run under Actions.
+
+For later releases: bump `version` in `package.json` and add a [CHANGELOG.md](CHANGELOG.md) entry in a PR,
+merge it, then tag `main`.
 
 ## Licence
 
