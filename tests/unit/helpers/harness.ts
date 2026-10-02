@@ -6,7 +6,9 @@ import { loadConfig, type Config } from '../../../src/config.js';
 import type { ToolErrorPayload } from '../../../src/errors.js';
 import { silentLogger } from '../../../src/logger.js';
 import { ChainGuard, RateLimiter, resilientHttp } from '../../../src/rpc.js';
+import { ExplorerClient } from '../../../src/explorer/client.js';
 import { createServer } from '../../../src/server.js';
+import { mockExplorer, type ExplorerRoutes } from './explorer.js';
 import { mockRpc, TESTNET_CHAIN_ID, type Handler } from './rpc.js';
 
 export const TEST_ENV = {
@@ -24,15 +26,40 @@ export type CallResult = { ok: true; data: Record<string, unknown> } | { ok: fal
  * Wires the real MCP server, real viem client and real transport to a mock
  * JSON-RPC node, and connects an MCP client over an in-memory transport.
  */
-export async function createHarness(handlers: Record<string, Handler>, overrides: Partial<Config> = {}) {
-  const config = testConfig({ rpcRetryBaseDelayMs: 1, rpcTimeoutMs: 200, ...overrides });
+export async function createHarness(
+  handlers: Record<string, Handler>,
+  overrides: Partial<Config> = {},
+  options: { explorer?: ExplorerRoutes } = {},
+) {
+  const config = testConfig({
+    rpcRetryBaseDelayMs: 1,
+    rpcTimeoutMs: 200,
+    explorerTimeoutMs: 200,
+    ...(options.explorer ? { explorerApiUrl: 'https://explorer.test.invalid/api/v2' } : {}),
+    ...overrides,
+  });
   const rpc = mockRpc(handlers);
   const chain = buildChain(config);
   const client = createPublicClient({
     chain,
     transport: resilientHttp(config, { limiter: new RateLimiter(10_000), fetchFn: rpc.fetchFn, sleep: async () => {} }),
   });
-  const server = createServer({ client, config, guard: new ChainGuard(client, config.chainId), logger: silentLogger });
+  const explorerMock = options.explorer ? mockExplorer(options.explorer) : undefined;
+  const explorer =
+    explorerMock && config.explorerApiUrl
+      ? new ExplorerClient(config.explorerApiUrl, config, {
+          fetchFn: explorerMock.fetchFn,
+          sleep: async () => {},
+          limiter: new RateLimiter(10_000),
+        })
+      : undefined;
+  const server = createServer({
+    client,
+    config,
+    guard: new ChainGuard(client, config.chainId),
+    logger: silentLogger,
+    ...(explorer ? { explorer } : {}),
+  });
 
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -58,6 +85,7 @@ export async function createHarness(handlers: Record<string, Handler>, overrides
   return {
     call,
     rpc,
+    explorer: explorerMock,
     mcp,
     close: async () => {
       await mcp.close();

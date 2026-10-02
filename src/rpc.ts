@@ -53,13 +53,19 @@ export interface RetryOptions {
   sleep?: Sleep;
   random?: () => number;
   onRetry?: (info: { attempt: number; delayMs: number; error: unknown }) => void;
+  /** Server-requested delay (e.g. from a Retry-After header). Defaults to reading viem's HttpRequestError. */
+  retryAfterMs?: (err: unknown) => number | undefined;
 }
 
 /** Retry-After header in milliseconds, if the error carries one. */
-function retryAfterMs(err: unknown): number | undefined {
+function viemRetryAfterMs(err: unknown): number | undefined {
   const http =
     err instanceof BaseError ? (err.walk((e) => e instanceof HttpRequestError) as HttpRequestError | null) : null;
-  const value = http?.headers?.get('retry-after');
+  return parseRetryAfter(http?.headers?.get('retry-after'));
+}
+
+/** Parses a Retry-After header (seconds or HTTP date) into milliseconds. */
+export function parseRetryAfter(value: string | null | undefined): number | undefined {
   if (!value) return undefined;
   const seconds = Number(value);
   if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
@@ -81,6 +87,7 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions):
     sleep = realSleep,
     random = Math.random,
     onRetry,
+    retryAfterMs = viemRetryAfterMs,
   } = options;
 
   for (let attempt = 0; ; attempt++) {

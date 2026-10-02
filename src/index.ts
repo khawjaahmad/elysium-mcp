@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { buildChain } from './chain.js';
+import { ExplorerClient } from './explorer/client.js';
 import { loadConfig, redactUrl, type Config } from './config.js';
 import { createLogger, type Logger } from './logger.js';
 import { ChainGuard, createElysiumClient, RateLimiter } from './rpc.js';
@@ -13,7 +14,8 @@ function buildContext(config: Config, logger: Logger): ToolContext {
   const chain = buildChain(config);
   const limiter = new RateLimiter(config.rpcRateLimitRps);
   const client = createElysiumClient(config, chain, { limiter, logger });
-  return { client, config, guard: new ChainGuard(client, config.chainId), logger };
+  const explorer = config.explorerApiUrl ? new ExplorerClient(config.explorerApiUrl, config, { logger }) : undefined;
+  return { client, config, guard: new ChainGuard(client, config.chainId), logger, ...(explorer ? { explorer } : {}) };
 }
 
 /** Verifies the chain ID at startup. A mismatch is fatal; an unreachable RPC is retried on the first tool call. */
@@ -32,6 +34,9 @@ async function main(): Promise<void> {
   const config = loadConfig();
   const logger = createLogger(config.logLevel);
   logger.info(`${SERVER_NAME} ${SERVER_VERSION} starting (transport=${config.transport})`);
+  if (config.explorerApiUrl) {
+    logger.info(`Explorer tools enabled at ${redactUrl(config.explorerApiUrl)} (undocumented API)`);
+  }
   if (config.enableWrites) logger.warn('ENABLE_WRITES is set, but write tools are not implemented in this version.');
 
   const ctx = buildContext(config, logger);

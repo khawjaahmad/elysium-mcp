@@ -22,7 +22,20 @@ describe('loadConfig', () => {
       httpToken: undefined,
       logLevel: 'info',
       enableWrites: false,
+      explorerApiUrl: undefined,
+      explorerTimeoutMs: 10_000,
+      explorerRetryCount: 2,
+      explorerRateLimitRps: 5,
     });
+  });
+
+  it('leaves explorer tools off unless EXPLORER_API_URL is set, and validates it', () => {
+    expect(loadConfig({ ...BASE, EXPLORER_API_URL: '' }).explorerApiUrl).toBeUndefined();
+    expect(loadConfig({ ...BASE, EXPLORER_API_URL: 'https://elysium.kinetiq.xyz/api/v2' }).explorerApiUrl).toBe(
+      'https://elysium.kinetiq.xyz/api/v2',
+    );
+    expect(() => loadConfig({ ...BASE, EXPLORER_API_URL: 'not a url' })).toThrow(/EXPLORER_API_URL/);
+    expect(loadConfig({ ...BASE, EXPLORER_RATE_LIMIT_RPS: '2' }).explorerRateLimitRps).toBe(2);
   });
 
   it('requires the RPC URL and chain ID, with no built-in network', () => {
