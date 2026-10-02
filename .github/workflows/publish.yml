@@ -1,14 +1,15 @@
 name: Publish
 
-# Publishes to npm when a version tag (v1.2.3) is pushed. Needs the NPM_TOKEN repository secret, and a public
-# repository for --provenance. Release order: README.md → Releasing.
+# Stages a release on npm when a version tag (v1.2.3) is pushed. It authenticates with npm trusted publishing
+# (OIDC, no token), and the trusted publisher allows staging only, so nothing goes live until a maintainer
+# approves it with 2FA. See RELEASING.md.
 on:
   push:
     tags: ['v*']
 
 permissions:
   contents: read
-  id-token: write # npm provenance
+  id-token: write # npm trusted publishing (OIDC) and provenance
 
 concurrency:
   group: publish
@@ -40,13 +41,16 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22 # staged publishing needs Node 22.14.0 or newer; 22 resolves to the latest 22.x
           cache: npm
           registry-url: https://registry.npmjs.org
 
+      # npm stage needs npm 11.15.0 or newer, and Node 22 ships npm 10.
+      - run: npm install -g npm@^11.15.0
       - run: npm ci
       - run: npx prettier --check .
-      # prepublishOnly runs the typecheck, the unit tests and the build.
-      - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - run: npm run typecheck
+      - run: npm test
+      # Build before staging: npm reads the bin entry (dist/index.js) before prepublishOnly runs.
+      - run: npm run build
+      - run: npm stage publish --access public --provenance
