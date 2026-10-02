@@ -4,6 +4,22 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-10-02
+
+### Changed
+
+- The README is now a short overview: the notice, the quickstart, one-line tables of tools and environment
+  variables, and a summary of the write tools' safety rules. The detail moved, with its content kept, to
+  `docs/TOOLS.md`, `docs/EXPLORER.md`, `docs/WRITES.md` and `CONTRIBUTING.md`.
+- `docs/WRITES.md` gains a setup section.
+- README links are absolute GitHub URLs, so they work from the npm page.
+- Releases are staged on npm through trusted publishing and approved with 2FA (`RELEASING.md`).
+
+### Notes
+
+- 0.1.0 was published without provenance: it was staged outside the release workflow, so it has no
+  provenance attestation. From 0.1.1, releases are published by the release workflow, which attaches provenance.
+
 ## [0.1.0] - 2026-10-02
 
 First public release. Testnet only, unofficial, not affiliated with Kinetiq.
@@ -35,4 +51,5 @@ First public release. Testnet only, unofficial, not affiliated with Kinetiq.
 - RPC rate limiting, retries with backoff, and a chain ID check on first use.
 - [docs/CONCEPTS.md](docs/CONCEPTS.md), an introduction to every blockchain concept the server relies on.
 
+[0.1.1]: https://github.com/khawjaahmad/elysium-mcp/releases/tag/v0.1.1
 [0.1.0]: https://github.com/khawjaahmad/elysium-mcp/releases/tag/v0.1.0

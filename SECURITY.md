@@ -35,7 +35,7 @@ Especially relevant:
 - A write being sent twice, or a retryable error being returned after signing.
 - Bypassing the HTTP transport's bearer token or its loopback-only default.
 
-Already known and documented in the [README](README.md#risks-of-the-write-tools), so not reportable on its
+Already known and documented in the [write tools guide](docs/WRITES.md#risks-of-the-write-tools), so not reportable on its
 own:
 
 - `WRITE_ALLOWLIST` checks only the transaction's destination, not addresses inside call data.
