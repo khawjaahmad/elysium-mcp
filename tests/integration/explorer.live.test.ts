@@ -40,11 +40,8 @@ describe.skipIf(SKIP)('Elysium explorer (live)', () => {
   };
 
   // A separate client with more retries than the default, used only to find test inputs.
-  const discovery = new ExplorerClient(
-    config.explorerApiUrl!,
-    { ...config, explorerRetryCount: 4 },
-    { logger: silentLogger },
-  );
+  // Built in beforeAll: this body also runs when the suite is skipped, without an explorer URL.
+  let discovery: ExplorerClient;
   // Found once and shared. A failed attempt is not cached, so the next test tries again.
   let inputs: Promise<{ token: string; holder: string }> | undefined;
   const tokenAndHolder = () =>
@@ -62,6 +59,11 @@ describe.skipIf(SKIP)('Elysium explorer (live)', () => {
     }));
 
   beforeAll(async () => {
+    discovery = new ExplorerClient(
+      config.explorerApiUrl!,
+      { ...config, explorerRetryCount: 4 },
+      { logger: silentLogger },
+    );
     const client = createElysiumClient(config, buildChain(config), {
       limiter: new RateLimiter(config.rpcRateLimitRps),
       logger: silentLogger,
