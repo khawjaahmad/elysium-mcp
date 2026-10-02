@@ -1,6 +1,6 @@
 import { encodeEventTopics, formatLog, numberToHex, type AbiEvent, type Address, type Hex, type RpcLog } from 'viem';
 import { z } from 'zod';
-import { ToolError, rpcMessage, toToolError } from '../errors.js';
+import { ToolError, rpcCode, rpcMessage, toToolError } from '../errors.js';
 import { coerceArg, parseAbiInput, parseAddress, parseBlockRef, parseHex } from '../inputs.js';
 import type { ChainClient } from '../rpc.js';
 import { defineTool } from './define.js';
@@ -11,22 +11,52 @@ const MAX_ADDRESSES = 20;
 const DEFAULT_LIMIT = 1000;
 const MAX_LIMIT = 10_000;
 
-/** Messages nodes use when a log query spans too much. Matched case-insensitively. */
-const RANGE_ERROR_PATTERN =
-  /block range|range (is )?too (large|wide|big)|too many (blocks|results|logs)|exceed(s|ed)? .*(limit|range|max)|limit exceeded|more than \d+ (results|logs|blocks)|query returned more than|response size/i;
+/**
+ * eth_getLogs rejections observed from the Elysium testnet RPC (2026-10-02). The
+ * limits come from the RPC provider in front of the node, not from Nitro, so
+ * other endpoints may word them differently; unrecognised wording stays
+ * RPC_ERROR, and the live diagnostic test reports it.
+ */
+const NODE_LIMITS = [
+  {
+    // "eth_getLogs block range 9999 exceeds maximum of 2000; narrow fromBlock–toBlock or filter by address/topics"
+    pattern: /eth_getLogs block range (\d+) exceeds maximum of (\d+)/i,
+    reason: 'block_range',
+    hint: (limit: string) =>
+      `The RPC allows at most ${limit} blocks per query without a filter. Narrow fromBlock-toBlock, or filter by address, event or topics.`,
+  },
+  {
+    // "logs count limit exceeded (10000) consider refine/narrow down your query" (JSON-RPC code -32005)
+    pattern: /logs count limit exceeded \((\d+)\)/i,
+    reason: 'too_many_logs',
+    hint: (limit: string) =>
+      `The query matched more than ${limit} logs, the most the RPC returns at once. Narrow the block range or add filters (address, event, args).`,
+  },
+] as const;
 
 /**
- * Maps an eth_getLogs failure to a ToolError. A non-retryable node error whose
- * message says the query is too wide becomes RANGE_TOO_LARGE, carrying the
- * node's own text; everything else is classified as usual.
+ * Maps an eth_getLogs failure to a ToolError. A node-side limit rejection
+ * becomes RANGE_TOO_LARGE carrying the node's own text and limit; everything
+ * else is classified as usual.
  */
 export function classifyGetLogsError(err: unknown, fromBlock: bigint, toBlock: bigint): ToolError {
   const e = toToolError(err);
+  if (e.retryable) return e;
   const message = rpcMessage(err);
-  if (!e.retryable && (e.code === 'RPC_ERROR' || e.code === 'INVALID_INPUT') && RANGE_ERROR_PATTERN.test(message)) {
-    return new ToolError('RANGE_TOO_LARGE', `The RPC node rejected the range: ${message}`, {
-      hint: 'Use a smaller block range or a narrower filter (address, event, args).',
-      details: { fromBlock: fromBlock.toString(), toBlock: toBlock.toString(), rpcMessage: message },
+  for (const limit of NODE_LIMITS) {
+    const match = limit.pattern.exec(message);
+    if (!match) continue;
+    const nodeLimit = match[match.length - 1]!;
+    return new ToolError('RANGE_TOO_LARGE', `The RPC node rejected the query: ${message}`, {
+      hint: limit.hint(nodeLimit),
+      details: {
+        reason: limit.reason,
+        nodeLimit: Number(nodeLimit),
+        fromBlock: fromBlock.toString(),
+        toBlock: toBlock.toString(),
+        rpcCode: rpcCode(err),
+        rpcMessage: message,
+      },
       cause: err,
     });
   }

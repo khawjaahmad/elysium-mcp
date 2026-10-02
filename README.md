@@ -176,11 +176,20 @@ Arbitrum chains these typically include `l1BlockNumber`, `sendRoot` and `sendCou
 **Output**
 
 - `status`: `success`, `reverted` or `pending`
+- `transactionType`: `{ code, name, origin }`, read from the transaction's raw `type` field.
+  - Codes 0–4 are standard Ethereum types sent by users (`origin: "user"`).
+  - Codes 100–106 are [Arbitrum's own types](https://docs.arbitrum.io/arbitrum-essentials/arbitrum-vs-ethereum/rpc-methods):
+    bridge deposits and messages from the parent chain (`"bridge"`), retryable redeems (`"retryable"`), and
+    ArbOS internal transactions (`"arbos"`).
+  - Unrecognised codes give `name: "unknown"`.
+- `systemTransaction`: `true` for ArbOS internal transactions (type 106), with a `note`. Every block starts with
+  one (`startBlock`, at index 0). No user sends them and they pay no fee, so a zero fee there is expected.
 - `transaction`: all transaction fields
 - `receipt`: all receipt fields except logs (plus any extras the node adds, such as Arbitrum's `gasUsedForL1`),
   or `null` while pending
 - `value`: `{ wei, formatted, symbol }`
-- `fee`: `gasUsed × effectiveGasPrice` as `{ wei, formatted, symbol }`, or `null` while pending
+- `fee`: `gasUsed × effectiveGasPrice` as `{ wei, formatted, symbol }`; `null` while pending or if the node
+  reports no `effectiveGasPrice`
 - `decodedInput`: `{ functionName, args }`, `{ error }`, or `null` if no ABI was given or the function isn't in it
 - `logs`: array of `{ address, topics, data, blockNumber, blockHash, transactionHash, transactionIndex, logIndex, removed, decoded, decodeError? }`.
   `decoded` is `{ eventName, args }` when the ABI contains the event, otherwise `null`. `decodeError` is
@@ -250,8 +259,18 @@ return value: a single value, an array for several outputs, or an object for str
 `get_transaction`).
 
 **Errors:** `RANGE_TOO_LARGE` when the range exceeds `MAX_LOG_BLOCK_RANGE`, with a `hint` showing how to
-split it. If the node itself rejects a range under the cap (too many results, range limit), its message is
-passed through, also as `RANGE_TOO_LARGE`.
+split it.
+
+The Elysium testnet RPC also enforces its own limits. These come from the RPC provider, not from Nitro, so they
+may change or differ on mainnet. The server recognises the two rejections observed on the testnet (2026-10-02)
+and returns them as `RANGE_TOO_LARGE` with the node's own message and limit in `details`:
+
+| `details.reason` | Node message                                                                                                 | Meaning                                         |
+| ---------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------- |
+| `block_range`    | `eth_getLogs block range 9999 exceeds maximum of 2000; narrow fromBlock–toBlock or filter by address/topics` | Unfiltered queries are limited to 2,000 blocks. |
+| `too_many_logs`  | `logs count limit exceeded (10000) consider refine/narrow down your query` (code -32005)                     | A query may match at most 10,000 logs.          |
+
+Any other node error stays `RPC_ERROR`, with the node's message.
 
 ### `simulate_call`
 
