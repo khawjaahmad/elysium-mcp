@@ -77,16 +77,49 @@ describe('get_logs', () => {
     expectOk(await h.call('get_logs', { fromBlock: 1, toBlock: 100 }));
   });
 
-  it('passes a node-side range rejection through as RANGE_TOO_LARGE', async () => {
+  // Exact messages returned by the Elysium testnet RPC (live run, 2026-10-02).
+  it('maps the RPC block-range rejection to RANGE_TOO_LARGE with the node limit', async () => {
+    const h = await createHarness({
+      eth_getLogs: () => {
+        // The live run captured this message but not its JSON-RPC code; -32000 is a stand-in.
+        throw new RpcFailure(
+          -32000,
+          'eth_getLogs block range 9999 exceeds maximum of 2000; narrow fromBlock–toBlock or filter by address/topics',
+        );
+      },
+    });
+    close = h.close;
+    const error = expectError(await h.call('get_logs', { fromBlock: 1, toBlock: 50 }));
+    expect(error.code).toBe('RANGE_TOO_LARGE');
+    expect(error.message).toMatch(/exceeds maximum of 2000/);
+    expect(error.details).toMatchObject({ reason: 'block_range', nodeLimit: 2000, rpcCode: -32000 });
+    expect(error.hint).toMatch(/at most 2000 blocks/);
+  });
+
+  it('maps the RPC log-count rejection to RANGE_TOO_LARGE without retrying', async () => {
+    const h = await createHarness({
+      eth_getLogs: () => {
+        throw new RpcFailure(-32005, 'logs count limit exceeded (10000) consider refine/narrow down your query');
+      },
+    });
+    close = h.close;
+    const error = expectError(await h.call('get_logs', { fromBlock: 1, toBlock: 50 }));
+    expect(error).toMatchObject({
+      code: 'RANGE_TOO_LARGE',
+      retryable: false,
+      details: { reason: 'too_many_logs', nodeLimit: 10000, rpcCode: -32005 },
+    });
+    expect(h.rpc.count('eth_getLogs')).toBe(1);
+  });
+
+  it('does not guess: other limit-sounding wording stays RPC_ERROR', async () => {
     const h = await createHarness({
       eth_getLogs: () => {
         throw new RpcFailure(-32000, 'query returned more than 10000 results');
       },
     });
     close = h.close;
-    const error = expectError(await h.call('get_logs', { fromBlock: 1, toBlock: 50 }));
-    expect(error.code).toBe('RANGE_TOO_LARGE');
-    expect(error.message).toMatch(/more than 10000 results/);
+    expect(expectError(await h.call('get_logs', { fromBlock: 1, toBlock: 50 })).code).toBe('RPC_ERROR');
   });
 
   it('keeps unrelated node errors as RPC_ERROR', async () => {

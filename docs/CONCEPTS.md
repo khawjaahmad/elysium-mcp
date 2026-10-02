@@ -75,6 +75,12 @@ After a transaction is included in a block, the node produces a **receipt**. The
 
 A transaction without a receipt yet is **pending**.
 
+Each transaction has a **type** code. Types 0–4 are standard Ethereum formats signed by users. Arbitrum
+chains add their own types (100–106) for transactions that no user signed: deposits and messages arriving
+from the parent chain, and **ArbOS internal transactions** (type 106). ArbOS is the chain's built-in system
+layer. It starts every block with an internal `startBlock` transaction that records bookkeeping data and pays
+no fee. `get_transaction` flags these as `systemTransaction: true`.
+
 ## Gas, base fee and fees
 
 **Gas** measures computational work: a plain coin transfer costs 21,000 gas, contract calls cost more.

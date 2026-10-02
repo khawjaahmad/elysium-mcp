@@ -20,6 +20,9 @@ describe('get_transaction', () => {
 
     const data = expectOk(await h.call('get_transaction', { hash: TX_HASH, abi: ERC20 }));
     expect(data.status).toBe('success');
+    expect(data.transactionType).toEqual({ code: 2, name: 'eip1559', origin: 'user' });
+    expect(data.systemTransaction).toBe(false);
+    expect(data).not.toHaveProperty('note');
     expect(data.fee).toEqual({ wei: '210000000000', formatted: '0.00000021', symbol: 'HYPE' });
     expect(data.value).toEqual({ wei: '0', formatted: '0', symbol: 'HYPE' });
     expect(data.receipt).toMatchObject({ gasUsed: '21000', gasUsedForL1: '0x10' });
@@ -63,6 +66,55 @@ describe('get_transaction', () => {
     const log = (withAbi.logs as { decoded: unknown; decodeError?: string }[])[0];
     expect(log?.decoded).toBeNull();
     expect(log?.decodeError).toBeTruthy();
+  });
+
+  it('flags ArbOS internal transactions (type 0x6a) as system transactions with a zero fee', async () => {
+    // Shape of the startBlock transaction at index 0 of every Elysium block (observed on testnet).
+    const arbos = '0x00000000000000000000000000000000000a4b05';
+    const h = await createHarness({
+      eth_getTransactionByHash: () =>
+        rpcTransaction({
+          type: '0x6a',
+          from: arbos,
+          to: arbos,
+          input: '0x6bf6a42d',
+          gas: '0x0',
+          transactionIndex: '0x0',
+          maxFeePerGas: undefined,
+          maxPriorityFeePerGas: undefined,
+        }),
+      eth_getTransactionReceipt: () => rpcReceipt({ type: '0x6a', from: arbos, to: arbos, gasUsed: '0x0' }),
+    });
+    close = h.close;
+    const data = expectOk(await h.call('get_transaction', { hash: TX_HASH }));
+    expect(data.transactionType).toEqual({ code: 106, name: 'ArbitrumInternalTx', origin: 'arbos' });
+    expect(data.systemTransaction).toBe(true);
+    expect(data.note).toMatch(/not sent by any user/);
+    expect(data.fee).toEqual({ wei: '0', formatted: '0', symbol: 'HYPE' });
+  });
+
+  it('labels Arbitrum bridge transactions and unknown type codes', async () => {
+    let type = '0x64';
+    const h = await createHarness({
+      eth_getTransactionByHash: () => rpcTransaction({ type }),
+      eth_getTransactionReceipt: () => rpcReceipt({ type }),
+    });
+    close = h.close;
+    const deposit = expectOk(await h.call('get_transaction', { hash: TX_HASH }));
+    expect(deposit.transactionType).toEqual({ code: 100, name: 'ArbitrumDepositTx', origin: 'bridge' });
+    expect(deposit.systemTransaction).toBe(false);
+    type = '0x7f';
+    const unknown = expectOk(await h.call('get_transaction', { hash: TX_HASH }));
+    expect(unknown.transactionType).toEqual({ code: 127, name: 'unknown', origin: 'unknown' });
+  });
+
+  it('returns a null fee when the node reports no effectiveGasPrice', async () => {
+    const h = await createHarness({
+      eth_getTransactionByHash: () => rpcTransaction(),
+      eth_getTransactionReceipt: () => rpcReceipt({ effectiveGasPrice: undefined }),
+    });
+    close = h.close;
+    expect(expectOk(await h.call('get_transaction', { hash: TX_HASH })).fee).toBeNull();
   });
 
   it('reports pending transactions with a null receipt', async () => {

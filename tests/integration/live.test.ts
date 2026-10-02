@@ -41,7 +41,9 @@ describe.skipIf(SKIP)('Elysium testnet (live)', () => {
 
   // Discovered during the run.
   let latest: bigint;
-  let sampleTx: { hash: string; from: string; to: string | null } | undefined;
+  // Picked by the type the RPC reports, not by position in the block.
+  let systemTx: { hash: string; from: string } | undefined;
+  let userTx: { hash: string; from: string } | undefined;
   let erc20: string | undefined;
   let sequencer: string | undefined;
 
@@ -96,25 +98,70 @@ describe.skipIf(SKIP)('Elysium testnet (live)', () => {
     expect(byHash.block.number).toBe(byTag.block.number);
   });
 
-  it('get_transaction: returns a recent transaction with its receipt and fee', async () => {
-    for (let n = latest; n > latest - 50n && !sampleTx; n--) {
+  it('get_block: finds recent ArbOS system and user transactions by their on-chain type', async () => {
+    const seenTypes = new Set<string>();
+    for (let n = latest; n > latest - 200n && !(systemTx && userTx); n--) {
       const block = ok(await call('get_block', { block: Number(n), includeTransactions: true }));
-      const tx = (block.block.transactions as { hash: string; from: string; to: string | null }[])[0];
-      if (tx) sampleTx = { hash: tx.hash, from: tx.from, to: tx.to };
+      for (const tx of block.block.transactions as { hash: string; from: string; typeHex?: string }[]) {
+        const code = tx.typeHex === undefined ? NaN : Number.parseInt(tx.typeHex, 16);
+        seenTypes.add(String(tx.typeHex));
+        if (code === 106) systemTx ??= { hash: tx.hash, from: tx.from };
+        else if (code >= 0 && code <= 4) userTx ??= { hash: tx.hash, from: tx.from };
+      }
     }
-    expect(sampleTx, 'no transactions in the last 50 blocks').toBeDefined();
+    console.info('[live] transaction types seen (raw RPC typeHex):', [...seenTypes].join(', '));
+    console.info('[live] system tx:', JSON.stringify(systemTx), 'user tx:', JSON.stringify(userTx));
+    expect(systemTx, 'no ArbOS internal (type 0x6a) transaction in the last 200 blocks').toBeDefined();
+    expect(userTx, 'no user (type 0x0-0x4) transaction in the last 200 blocks').toBeDefined();
+  });
 
-    const data = ok(await call('get_transaction', { hash: sampleTx!.hash }));
-    console.info('[live] sample tx', sampleTx!.hash, data.status, 'fee', JSON.stringify(data.fee));
+  it('get_transaction: flags an ArbOS internal transaction as a zero-fee system transaction', async () => {
+    const data = ok(await call('get_transaction', { hash: systemTx!.hash }));
+    console.info(
+      '[live] system tx',
+      systemTx!.hash,
+      JSON.stringify({ type: data.transactionType, fee: data.fee, note: data.note }),
+    );
+    expect(data.transaction.typeHex).toBe('0x6a');
+    expect(data.transactionType).toEqual({ code: 106, name: 'ArbitrumInternalTx', origin: 'arbos' });
+    expect(data.systemTransaction).toBe(true);
+    expect(data.fee.wei).toBe('0');
+  });
+
+  it('get_transaction: returns a user transaction with a real, non-zero fee in HYPE', async () => {
+    const data = ok(await call('get_transaction', { hash: userTx!.hash }));
+    const gasUsed = BigInt(data.receipt.gasUsed);
+    const effectiveGasPrice = BigInt(data.receipt.effectiveGasPrice);
+    const block = ok(await call('get_block', { block: Number(data.receipt.blockNumber) }));
+    console.info(
+      '[live] user tx',
+      userTx!.hash,
+      JSON.stringify({
+        type: data.transactionType,
+        status: data.status,
+        gasUsed: gasUsed.toString(),
+        effectiveGasPriceWei: effectiveGasPrice.toString(),
+        blockBaseFeeWei: block.block.baseFeePerGas,
+        fee: data.fee,
+      }),
+    );
+    expect(data.systemTransaction).toBe(false);
+    expect(data.transactionType.origin).toBe('user');
     expect(['success', 'reverted']).toContain(data.status);
-    expect(data.transaction.hash).toBe(sampleTx!.hash);
+    // The fee is gasUsed x effectiveGasPrice in wei, paid at no less than the block's base fee,
+    // and shown in HYPE using 18 decimals.
+    expect(gasUsed).toBeGreaterThan(0n);
+    expect(effectiveGasPrice).toBeGreaterThanOrEqual(BigInt(block.block.baseFeePerGas));
+    expect(BigInt(data.fee.wei)).toBe(gasUsed * effectiveGasPrice);
     expect(BigInt(data.fee.wei)).toBeGreaterThan(0n);
+    expect(data.fee.formatted).toBe(formatUnits(gasUsed * effectiveGasPrice, 18));
     expect(data.fee.symbol).toBe('HYPE');
   });
 
-  it('get_balance: returns native HYPE in wei with 18-decimal formatting', async () => {
-    const data = ok(await call('get_balance', { address: sampleTx!.from }));
-    console.info('[live] balance of', sampleTx!.from, JSON.stringify(data.native));
+  it('get_balance: an address that pays fees holds HYPE, shown with 18 decimals', async () => {
+    const data = ok(await call('get_balance', { address: userTx!.from }));
+    console.info('[live] balance of fee payer', userTx!.from, JSON.stringify(data.native));
+    expect(BigInt(data.native.wei)).toBeGreaterThan(0n);
     expect(data.native.symbol).toBe('HYPE');
     expect(data.native.formatted).toBe(formatUnits(BigInt(data.native.wei), 18));
   });
@@ -146,18 +193,30 @@ describe.skipIf(SKIP)('Elysium testnet (live)', () => {
         address: erc20,
         abi: ERC20_READS,
         functionName: 'balanceOf',
-        args: [sampleTx!.from],
+        args: [userTx!.from],
       }),
     );
     expect(balance.result).toMatch(/^\d+$/);
 
-    const viaBalance = ok(await call('get_balance', { address: sampleTx!.from, tokens: [erc20] }));
+    const viaBalance = ok(await call('get_balance', { address: userTx!.from, tokens: [erc20] }));
     expect(viaBalance.tokens[0].raw).toBe(balance.result);
   });
 
   it('simulate_call: dry-runs a zero-value HYPE transfer and estimates gas', async () => {
-    const data = ok(await call('simulate_call', { from: sampleTx!.from, to: sampleTx!.from, value: '0' }));
-    console.info('[live] simulate transfer', JSON.stringify({ gas: data.gasEstimate, fee: data.estimatedFee }));
+    // Diagnostic for the failure seen on 2026-10-02 (success: false, cause not printed). That run
+    // simulated ArbOS (the sender of the block's first transaction) sending to itself. Re-run that
+    // exact case, plus a control from an ordinary fee-paying account, and print both in full.
+    // The assertion below is deliberately unchanged until the cause is understood.
+    const cases = [
+      { label: 'reproduction: ArbOS sender -> itself', from: systemTx!.from },
+      { label: 'control: user fee payer -> itself', from: userTx!.from },
+    ];
+    const results: Record<string, Result> = {};
+    for (const c of cases) {
+      results[c.label] = await call('simulate_call', { from: c.from, to: c.from, value: '0' });
+      console.info(`[live] simulate_call ${c.label} (${c.from}):`, JSON.stringify(results[c.label], null, 2));
+    }
+    const data = ok(results[cases[0]!.label]!);
     expect(data.success).toBe(true);
     expect(BigInt(data.gasEstimate)).toBeGreaterThanOrEqual(21_000n);
   });
