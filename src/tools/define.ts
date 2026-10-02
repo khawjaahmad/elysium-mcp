@@ -3,6 +3,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { Config } from '../config.js';
 import { toToolError } from '../errors.js';
+import type { ExplorerClient } from '../explorer/client.js';
 import type { Logger } from '../logger.js';
 import type { ChainClient, ChainGuard } from '../rpc.js';
 
@@ -11,6 +12,8 @@ export interface ToolContext {
   config: Config;
   guard: Pick<ChainGuard, 'ensure'>;
   logger: Logger;
+  /** Present only when EXPLORER_API_URL is set. */
+  explorer?: ExplorerClient;
 }
 
 export interface ToolDefinition<I extends z.ZodRawShape, O extends z.ZodRawShape> {
@@ -19,6 +22,8 @@ export interface ToolDefinition<I extends z.ZodRawShape, O extends z.ZodRawShape
   description: string;
   inputSchema: I;
   outputSchema: O;
+  /** Whether the RPC chain-ID check must pass first. Default true; explorer tools set false. */
+  requiresChain?: boolean;
   handler: (args: z.infer<z.ZodObject<I>>, ctx: ToolContext) => Promise<z.infer<z.ZodObject<O>>>;
 }
 
@@ -39,7 +44,7 @@ export function defineTool<I extends z.ZodRawShape, O extends z.ZodRawShape>(
 export async function runTool(def: AnyToolDefinition, args: unknown, ctx: ToolContext): Promise<CallToolResult> {
   const started = Date.now();
   try {
-    await ctx.guard.ensure();
+    if (def.requiresChain !== false) await ctx.guard.ensure();
     const result = (await def.handler(args as Record<string, unknown>, ctx)) as Record<string, unknown>;
     ctx.logger.debug(`${def.name} ok in ${Date.now() - started} ms`);
     return {

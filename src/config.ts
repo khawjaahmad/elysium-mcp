@@ -36,6 +36,16 @@ const envSchema = z.object({
 
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 
+  // Optional explorer tools. No default: they are only enabled when this is set.
+  EXPLORER_API_URL: z
+    .string()
+    .optional()
+    .transform((v) => (v === undefined || v === '' ? undefined : v))
+    .pipe(z.url({ protocol: /^https?$/, error: 'must be an http(s) URL' }).optional()),
+  EXPLORER_TIMEOUT_MS: positiveInt(10_000),
+  EXPLORER_RETRY_COUNT: z.coerce.number().int().min(0).max(10).default(2),
+  EXPLORER_RATE_LIMIT_RPS: z.coerce.number().positive().default(5),
+
   ENABLE_WRITES: bool,
 });
 
@@ -55,6 +65,10 @@ export interface Config {
   httpToken: string | undefined;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
   enableWrites: boolean;
+  explorerApiUrl: string | undefined;
+  explorerTimeoutMs: number;
+  explorerRetryCount: number;
+  explorerRateLimitRps: number;
 }
 
 export class ConfigError extends Error {
@@ -98,6 +112,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     httpToken: e.MCP_HTTP_TOKEN,
     logLevel: e.LOG_LEVEL,
     enableWrites: e.ENABLE_WRITES,
+    explorerApiUrl: e.EXPLORER_API_URL,
+    explorerTimeoutMs: e.EXPLORER_TIMEOUT_MS,
+    explorerRetryCount: e.EXPLORER_RETRY_COUNT,
+    explorerRateLimitRps: e.EXPLORER_RATE_LIMIT_RPS,
   };
 
   if (config.transport === 'http') {

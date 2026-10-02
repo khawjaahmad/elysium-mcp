@@ -34,12 +34,20 @@ export const ERROR_CODES = [
   'RPC_UNAVAILABLE',
   'RPC_ERROR',
   'CHAIN_MISMATCH',
+  'EXPLORER_UNAVAILABLE',
+  'EXPLORER_RESPONSE_INVALID',
+  'EXPLORER_ERROR',
   'INTERNAL_ERROR',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
-const RETRYABLE: ReadonlySet<ErrorCode> = new Set(['RPC_TIMEOUT', 'RATE_LIMITED', 'RPC_UNAVAILABLE']);
+const RETRYABLE: ReadonlySet<ErrorCode> = new Set([
+  'RPC_TIMEOUT',
+  'RATE_LIMITED',
+  'RPC_UNAVAILABLE',
+  'EXPLORER_UNAVAILABLE',
+]);
 
 export interface ToolErrorOptions {
   hint?: string;
