@@ -14,6 +14,10 @@ Releases go out through npm [staged publishing](https://docs.npmjs.com/staged-pu
 Requirements (from the npm docs): npm CLI 11.15.0 or newer for `npm stage`, and Node 22.14.0 or newer. The
 workflow uses Node 22 and installs `npm@^11.15.0`, because Node 22 ships npm 10.
 
+**Provenance on staged releases is confirmed.** `0.1.1`, the first release through this workflow, was staged
+and then approved, and it carries a provenance attestation: `dist.attestations` is present (SLSA provenance
+v1), and `gitHead` is `335995d`, the commit tagged `v0.1.1`.
+
 ## Each release
 
 - [ ] In a PR, bump `version` in `package.json` and add a [CHANGELOG.md](CHANGELOG.md) entry. Merge it.
@@ -62,4 +66,4 @@ Notes:
   This setup doesn't use one.
 - Staging a package that didn't exist yet made npm publish a public placeholder version, `0.0.0-stage`.
 - `0.1.0` was staged outside this workflow, so it has no provenance attestation. Releases from the workflow
-  carry one.
+  carry one, starting with `0.1.1`.
